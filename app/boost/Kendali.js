@@ -51,6 +51,7 @@ export function SetelanToko({ shopId, otomatis, slot }) {
 export function AturDaftar({ shopId, kandidat, sudah }) {
   const [buka, setBuka] = useState(false);
   const [pilih, setPilih] = useState(new Set());
+  const [cari, setCari] = useState('');
   const [sibuk, setSibuk] = useState(false);
 
   async function kirim(aksi, items) {
@@ -70,30 +71,96 @@ export function AturDaftar({ shopId, kandidat, sudah }) {
 
   const belum = kandidat.filter((k) => !sudah.some((s) => String(s.item_id) === String(k.item_id)));
 
+  /**
+   * Pencarian per toko: nama produk ATAU SKU.
+   *
+   * Kata dicocokkan terpisah, jadi "tensi omicron" tetap ketemu walau di
+   * nama produk kedua kata itu berjauhan — nama produk Shopee panjang dan
+   * urutan katanya jarang sesuai ingatan orang.
+   */
+  const kata = cari.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const terlihat = kata.length
+    ? belum.filter((k) => {
+        const teks = `${k.name || ''} ${k.item_sku || ''}`.toLowerCase();
+        return kata.every((w) => teks.includes(w));
+      })
+    : belum;
+
+  // "Pilih semua" hanya mencakup yang SEDANG TERLIHAT. Mencentang diam-diam
+  // produk di luar hasil pencarian adalah cara mudah memasukkan barang yang
+  // tidak dimaksud ke giliran boost.
+  const semuaTerlihat = terlihat.length > 0 && terlihat.every((k) => pilih.has(k.item_id));
+
+  function alihSemua() {
+    const s = new Set(pilih);
+    if (semuaTerlihat) terlihat.forEach((k) => s.delete(k.item_id));
+    else terlihat.forEach((k) => s.add(k.item_id));
+    setPilih(s);
+  }
+
   return (
     <div style={{ width: '100%', marginTop: 'var(--s3)' }}>
       <div className="bulkbar">
-        <span className="t">{pilih.size ? `${pilih.size} dipilih` : 'Pilih produk untuk masuk giliran'}</span>
+        <span className="t">
+          {pilih.size ? `${pilih.size} dipilih` : 'Pilih produk untuk masuk giliran'}
+        </span>
         <div className="spacer" />
         <button className="btn btn-sm" onClick={() => setBuka(false)}>Tutup</button>
         <button className="btn btn-sm btn-primary" disabled={!pilih.size || sibuk}
-                onClick={() => kirim('tambah', [...pilih])}>Tambahkan</button>
+                onClick={() => kirim('tambah', [...pilih])}>
+          {sibuk ? 'Menyimpan…' : `Tambahkan${pilih.size ? ` (${pilih.size})` : ''}`}
+        </button>
       </div>
-      <div className="table-wrap" style={{ maxHeight: 320, overflowY: 'auto' }}>
+
+      <div className="form-row" style={{ gap: 8, alignItems: 'center', margin: 'var(--s3) 0' }}>
+        <input value={cari} onChange={(e) => setCari(e.target.value)} autoFocus
+               placeholder="Cari nama produk atau SKU di toko ini…"
+               style={{ flex: 1, height: 32 }} />
+        {cari && (
+          <button className="btn btn-sm" onClick={() => setCari('')}>Hapus cari</button>
+        )}
+        <span className="t-mute" style={{ fontSize: 12, whiteSpace: 'nowrap' }}>
+          {kata.length ? `${terlihat.length} dari ${belum.length}` : `${belum.length} produk`}
+        </span>
+      </div>
+
+      <div className="table-wrap" style={{ maxHeight: 420, overflowY: 'auto' }}>
         <table>
-          <thead><tr><th style={{ width: 36 }}></th><th>Produk</th><th>SKU</th></tr></thead>
+          <thead><tr>
+            <th style={{ width: 36 }}>
+              <input type="checkbox" checked={semuaTerlihat} onChange={alihSemua}
+                     disabled={!terlihat.length}
+                     aria-label="Pilih semua yang terlihat" />
+            </th>
+            <th style={{ width: 52 }}></th>
+            <th>Produk</th><th>SKU</th>
+          </tr></thead>
           <tbody>
-            {belum.map((k) => (
+            {terlihat.map((k) => (
               <tr key={k.item_id}>
                 <td><input type="checkbox" checked={pilih.has(k.item_id)} aria-label={`Pilih ${k.name}`}
                            onChange={() => { const s = new Set(pilih);
                              s.has(k.item_id) ? s.delete(k.item_id) : s.add(k.item_id); setPilih(s); }} /></td>
+                <td>
+                  {k.image_url
+                    ? <img src={k.image_url} alt="" width={40} height={40} loading="lazy"
+                           style={{ borderRadius: 6, objectFit: 'cover',
+                                    border: '1px solid var(--line)' }} />
+                    : <div style={{ width: 40, height: 40, borderRadius: 6,
+                                    background: 'var(--surface-sunken)',
+                                    border: '1px solid var(--line)' }} />}
+                </td>
                 <td className="tt">{k.name}</td>
                 <td className="mono t-mute">{k.item_sku || '—'}</td>
               </tr>
             ))}
-            {!belum.length && <tr><td colSpan={3} className="t-mute">
-              Semua produk aktif toko ini sudah masuk giliran.</td></tr>}
+            {!terlihat.length && (
+              <tr><td colSpan={4} className="t-mute">
+                {kata.length
+                  ? `Tidak ada produk yang cocok dengan "${cari}" di toko ini.`
+                  : 'Semua produk aktif toko ini sudah masuk giliran.'}
+              </td></tr>
+            )}
           </tbody>
         </table>
       </div>

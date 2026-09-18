@@ -17,7 +17,9 @@ export default async function Keuangan({ searchParams }) {
   const t = ring.total;
 
   return (
-    <Shell judul="Keuangan" rute="/keuangan" kanan={<AutoSegar detik={180} />}>
+    <Shell judul="Keuangan" rute="/keuangan"
+           kanan={<><a className="btn btn-sm" href="/keuangan/opex">Beban Operasional</a>
+                   <AutoSegar detik={180} /></>}>
       <div className="filter-bar">
         <div className="filter-row"><div className="filter-key">Periode</div><RangePicker aktif={kode} awal={r.awal || ''} akhir={r.akhir || ''} /></div>
       </div>

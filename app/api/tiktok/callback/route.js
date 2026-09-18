@@ -5,8 +5,8 @@
 // TAHAP 2 (nanti): tukar code jadi access_token + refresh_token, simpan per toko.
 //
 // Alamat ini HARUS sama persis dengan Redirect URL di Partner Center.
-// GANTI dengan domain Railway milik PT Segawe Jaya Mulia, contoh:
-// https://<domain-segawe>.up.railway.app/api/tiktok/callback
+// Domain PT Segawe Jaya Mulia:
+// https://segawe-seller-center-production.up.railway.app/api/tiktok/callback
 // JANGAN pakai domain Numedix — app TikTok Shop-nya beda.
 
 export const dynamic = 'force-dynamic';

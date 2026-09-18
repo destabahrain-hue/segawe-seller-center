@@ -18,12 +18,16 @@ export default async function Boost() {
          LEFT JOIN boost_setting b ON b.shop_id = s.shop_id
          WHERE s.status = 'active'
          ORDER BY s.shop_name NULLS LAST, s.shop_id`),
-      q(`SELECT bp.*, p.name, p.item_sku
+      q(`SELECT bp.*, p.name, p.item_sku, p.image_url
          FROM boost_pool bp
          LEFT JOIN products p ON p.shop_id = bp.shop_id AND p.item_id = bp.item_id
          ORDER BY bp.shop_id, bp.last_boost_at NULLS FIRST, bp.id`),
-      q(`SELECT shop_id, item_id, name, item_sku FROM products
-         WHERE status = 'NORMAL' ORDER BY name LIMIT 2000`),
+      // Gambar diambil dari kolom products.image_url yang sudah terisi saat
+      // sinkron produk — tidak ada panggilan Shopee tambahan untuk ini.
+      // Batasnya dinaikkan karena 2000 sudah mulai memotong daftar toko besar,
+      // dan produk yang terpotong tidak akan pernah bisa dicari.
+      q(`SELECT shop_id, item_id, name, item_sku, image_url FROM products
+         WHERE status = 'NORMAL' ORDER BY name LIMIT 8000`),
     ]);
   } catch (e) {
     galat = { pesan: e.message, detail: [e.code && `kode: ${e.code}`, e.detail, e.hint]
@@ -82,6 +86,7 @@ export default async function Boost() {
                 <div className="table-wrap">
                   <table>
                     <thead><tr>
+                      <th style={{ width: 52 }}></th>
                       <th>Produk</th><th>SKU</th>
                       <th className="t-right">Sudah dinaikkan</th>
                       <th>Terakhir naik</th><th style={{ width: 110 }}></th>
@@ -89,6 +94,15 @@ export default async function Boost() {
                     <tbody>
                       {daftar.map((d) => (
                         <tr key={d.id}>
+                          <td>
+                            {d.image_url
+                              ? <img src={d.image_url} alt="" width={40} height={40} loading="lazy"
+                                     style={{ borderRadius: 6, objectFit: 'cover',
+                                              border: '1px solid var(--line)' }} />
+                              : <div style={{ width: 40, height: 40, borderRadius: 6,
+                                              background: 'var(--surface-sunken)',
+                                              border: '1px solid var(--line)' }} />}
+                          </td>
                           <td className="tt">{d.name || `item ${d.item_id}`}</td>
                           <td className="mono t-mute">{d.item_sku || '—'}</td>
                           <td className="t-num">{num(d.boost_count)}×</td>

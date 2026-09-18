@@ -33,7 +33,9 @@ export default async function LaporanToko({ searchParams }) {
   }));
 
   return (
-    <Shell judul="Laporan Toko" rute="/laporan-toko" kanan={<AutoSegar detik={120} />}>
+    <Shell judul="Laporan Toko" rute="/laporan-toko"
+           kanan={<><a className="btn btn-sm" href="/laporan-toko/sku">SKU Bocor</a>
+                   <AutoSegar detik={120} /></>}>
       <div className="filter-bar">
         <div className="filter-row">
           <div className="filter-key">Periode</div>
