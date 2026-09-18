@@ -35,7 +35,7 @@ Salin dari `.env.example`. Yang wajib:
 
 | Variabel | Isi |
 |---|---|
-| `SHOPEE_PARTNER_ID` | **punya PT Segawe sendiri** — jangan pakai `1239240` (itu app Numedix) |
+| `SHOPEE_PARTNER_ID` | **Live Partner ID milik PT Segawe** — bukan `1239240` (app Numedix), bukan juga Test Partner ID `1241774` |
 | `SHOPEE_PARTNER_KEY` | dari Open Platform Console |
 | `SHOPEE_HOST` | `https://partner.shopeemobile.com` (produksi) |
 | `APP_URL` | alamat publik Railway, tanpa garis miring di akhir |
