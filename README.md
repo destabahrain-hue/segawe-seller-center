@@ -126,3 +126,5 @@ npm install
 cp .env.example .env.local   # isi seperlunya
 npm run dev
 ```
+
+ 
