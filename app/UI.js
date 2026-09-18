@@ -34,10 +34,13 @@ export function Ledger({ t, keterangan }) {
     <div className="ledger">
       <div className="ledger-top">
         <div>
-          <div className="ledger-lab">Laba hari ini</div>
-          <div className="ledger-big num" style={t.laba < 0 ? { color: 'var(--neg)' } : undefined}>
-            {rp(t.laba)}
-          </div>
+          {/* Angka besar = OMZET. Laba tetap ditampilkan di bawah, tapi
+              tidak lagi jadi angka utama: omzet itu fakta yang sudah pasti,
+              sedangkan laba mengandung perkiraan selama masih ada pesanan
+              yang dananya belum dilepas Shopee. Angka pasti yang pantas
+              jadi kepala halaman. */}
+          <div className="ledger-lab">Omzet hari ini</div>
+          <div className="ledger-big num">{rp(o)}</div>
         </div>
         <div className="ledger-meta">
           {t.perkiraan > 0 && (
@@ -46,7 +49,10 @@ export function Ledger({ t, keterangan }) {
             </span>
           )}
           <span className="ledger-omzet">
-            Dari omzet <b className="num">{rp(o)}</b> · {num(t.pesanan)} pesanan · {keterangan}
+            Laba bersih <b className="num"
+              style={t.laba < 0 ? { color: 'var(--neg)' } : { color: 'var(--pos)' }}>
+              {rp(t.laba)}
+            </b> · margin {pct(t.margin)} · {num(t.pesanan)} pesanan · {keterangan}
           </span>
         </div>
       </div>

@@ -9,9 +9,16 @@ const MENU = [
   { grup: 'Ringkasan', item: [
     { href: '/',             label: 'Dashboard',        Icon: IDash },
     { href: '/realtime',     label: 'Laporan Realtime', Icon: IPulse },
-    { href: '/laporan-toko', label: 'Laporan Toko',     Icon: IChart },
-    { href: '/mingguan',     label: 'Laporan Mingguan', Icon: ICalendar },
-    { href: '/keuangan',     label: 'Keuangan',         Icon: IMoney },
+    { href: '/laporan-toko', label: 'Laporan Toko',     Icon: IChart, anak: [
+        { href: '/laporan-toko',     label: 'Ringkasan toko' },
+        { href: '/laporan-toko/sku', label: 'SKU Bocor' },
+      ] },
+    { href: '/keuangan',     label: 'Keuangan',         Icon: IMoney, anak: [
+        { href: '/keuangan',          label: 'Realtime' },
+        { href: '/keuangan/mingguan', label: 'Laporan Mingguan' },
+        { href: '/keuangan/bulanan',  label: 'Laporan Bulanan' },
+        { href: '/keuangan/opex',     label: 'Beban Operasional' },
+      ] },
   ]},
   { grup: 'Operasional', item: [
     { href: '/pesanan',    label: 'Pesanan',    Icon: IBag, anak: [
@@ -27,10 +34,11 @@ const MENU = [
         { href: '/pesanan?s=batal',      label: 'Batal',          kunci: 'batal' },
         { href: '/pesanan?s=unpaid',     label: 'Belum dibayar',  kunci: 'unpaid' },
         { href: '/pesanan?s=semua',      label: 'Semua pesanan',  kunci: 'semua' },
+        { href: '/pesanan/retur',        label: 'Purna Jual' },
         { href: '/pesanan/template',     label: 'Template Ekspor' },
       ] },
     { href: '/produk',     label: 'Produk',     Icon: IBox, anak: [
-        { href: '/produk?t=live',     label: 'Aktif' },
+        { href: '/produk?t=live',     label: 'Aktif', bawaan: true },
         { href: '/produk?t=habis',    label: 'Stok habis' },
         { href: '/produk?t=nonaktif', label: 'Nonaktif' },
         { href: '/produk?t=ditolak',  label: 'Ditolak' },
@@ -112,13 +120,41 @@ export default function Sidebar({ sinkron, peran = 'pemilik', nama = '', rute = 
                            * `s`-nya — dan halaman /pesanan tanpa parameter
                            * berarti tab bawaan, yaitu Pesanan baru.
                            */
-                          const jalurA = a.href.split('?')[0];
+                          const [jalurA, kueriA] = a.href.split('?');
                           const sSaatIni = cari?.get('s') || null;
+
+                          /**
+                           * Kalau alamat anaknya membawa parameter, parameter
+                           * itu HARUS ikut dibandingkan.
+                           *
+                           * Sub-menu Produk semuanya beralamat /produk?t=...,
+                           * dan dulu di sini alamatnya dipotong di tanda tanya
+                           * lalu dibandingkan jalurnya saja. Akibatnya kelima
+                           * anaknya sama-sama cocok dengan /produk dan semuanya
+                           * tersorot sekaligus.
+                           *
+                           * Anak tanpa parameter tetap dibandingkan lewat jalur
+                           * seperti semula.
+                           */
+                          const paramA = kueriA
+                            ? new URLSearchParams(kueriA) : null;
+                          const cocokParam = !paramA || [...paramA.entries()]
+                            .every(([k, v]) => {
+                              const kini = cari?.get(k);
+                              // Nilai bawaan: halaman /produk tanpa parameter
+                              // menampilkan yang aktif, jadi anak "Aktif" yang
+                              // tersorot — bukan tidak ada sama sekali.
+                              if (kini === null || kini === undefined) {
+                                return a.bawaan === true;
+                              }
+                              return kini === v;
+                            });
+
                           const dibuka = a.kunci
                             ? path === '/pesanan'
                               && (sSaatIni ? sSaatIni.split(',')[0] === a.kunci
                                            : a.kunci === 'baru')
-                            : path === jalurA;
+                            : path === jalurA && cocokParam;
                           const n = a.kunci && hitung ? hitung[a.kunci] : null;
                           return (
                             <Link key={a.href} href={a.href}

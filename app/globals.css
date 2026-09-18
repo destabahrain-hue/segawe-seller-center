@@ -81,7 +81,7 @@ a{color:inherit;text-decoration:none}
   border-right:1px solid var(--line);
 }
 /* Lockup PT Segawe Jaya Mulia jauh lebih memanjang (5,9:1) daripada
-   wordmark lama, jadi tingginya dinaikkan ke 20px supaya nama PT-nya
+   wordmark Numedix, jadi tingginya dinaikkan ke 20px supaya nama PT-nya
    masih terbaca, dan padding samping dipangkas ke --s4 supaya logo +
    chip "Seller" (191px) tetap muat di sidebar 248px. */
 .brand{
