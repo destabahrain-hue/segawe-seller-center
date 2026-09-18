@@ -150,6 +150,33 @@ CREATE TABLE IF NOT EXISTS ad_spend (
   PRIMARY KEY (shop_id, day)
 );
 
+-- ── Biaya iklan per PRODUK ──
+--
+-- ad_spend di atas tetap jadi angka RESMI toko dan tidak diubah. Tabel ini
+-- rinciannya, dan sengaja tidak pernah menggantikannya: jumlah baris di sini
+-- SELALU lebih kecil, karena ada iklan yang memang tidak melekat ke produk.
+-- Selisih keduanya ditampilkan apa adanya di laporan, bukan disembunyikan.
+--
+-- sumber membedakan dua jenis iklan yang bentuk datanya berbeda:
+--   individu  Iklan Individual & Grup Iklan — satu campaign satu produk,
+--             dibaca dari get_product_campaign_daily_performance
+--   otomatis  Iklan Produk Otomatis — satu campaign berisi puluhan produk,
+--             dibaca dari get_gms_item_performance
+--
+-- Penamaan ini mengikuti Seller Centre, BUKAN nama di API. Shopee menyebut
+-- yang pertama "manual" di API padahal isinya GMV Max ROAS, bukan bidding
+-- kata kunci — memakai istilah API di layar akan menyesatkan tim.
+CREATE TABLE IF NOT EXISTS ad_spend_item (
+  shop_id  BIGINT NOT NULL REFERENCES shops(shop_id) ON DELETE CASCADE,
+  day      DATE NOT NULL,
+  item_id  BIGINT NOT NULL,
+  sumber   TEXT NOT NULL,
+  expense  NUMERIC(14,2) NOT NULL DEFAULT 0,
+  gmv      NUMERIC(14,2) NOT NULL DEFAULT 0,
+  PRIMARY KEY (shop_id, day, item_id, sumber)
+);
+CREATE INDEX IF NOT EXISTS ad_spend_item_hari ON ad_spend_item (shop_id, day);
+
 -- ── Antrean tugas ──
 CREATE TABLE IF NOT EXISTS jobs (
   id           BIGSERIAL PRIMARY KEY,
@@ -485,3 +512,224 @@ LANGUAGE sql STABLE AS $$
       ORDER BY h.effective_from ASC LIMIT 1),
     0);
 $$;
+
+-- ── Purna jual: retur & pengembalian dana ──
+-- Bentuk kolomnya mengikuti balasan get_return_list apa adanya, supaya
+-- tidak ada penerjemahan yang bisa salah saat disimpan. Yang diterjemahkan
+-- hanya saat DITAMPILKAN.
+--
+-- Perhatikan ada TIGA tenggat berbeda, dan ketiganya penting:
+--   due_date              batas KITA menanggapi        ← paling mendesak
+--   return_ship_due_date  batas pembeli mengirim balik
+--   return_seller_due_date batas kita setelah barang dikirim
+CREATE TABLE IF NOT EXISTS returns (
+  return_sn       TEXT PRIMARY KEY,
+  shop_id         BIGINT NOT NULL,
+  order_sn        TEXT,
+  status          TEXT,
+  reason          TEXT,
+  text_reason     TEXT,
+  reassessed_reason TEXT,
+  refund_amount   NUMERIC(14,2),
+  amount_before_discount NUMERIC(14,2),
+  currency        TEXT,
+  create_time     TIMESTAMPTZ,
+  update_time     TIMESTAMPTZ,
+  due_date        TIMESTAMPTZ,
+  ship_due_date   TIMESTAMPTZ,
+  seller_due_date TIMESTAMPTZ,
+  tracking_number TEXT,
+  needs_logistics BOOLEAN,
+  negotiation_status TEXT,
+  proof_status    TEXT,
+  compensation_status TEXT,
+  refund_type     TEXT,          -- RRBOC (sebelum selesai) / RRAOC (sesudah)
+  solution        INTEGER,       -- 0 = retur + refund, 1 = refund saja
+  request_type    INTEGER,       -- 0 normal, 1 in-transit, 2 return-on-the-spot
+  validation_type TEXT,          -- seller_validation / warehouse_validation
+  arrived_at_wh   INTEGER,       -- 1 pending, 2 ditolak, 3 masuk, 4 batal
+  seller_arrange  BOOLEAN,
+  proof_mandatory BOOLEAN,
+  buyer_username  TEXT,          -- disamarkan Shopee (app tanpa akses data sensitif)
+  dispute_reason  JSONB,
+  dispute_text    JSONB,
+  images          JSONB,
+  items           JSONB,         -- item[] apa adanya
+  follow_up       JSONB,         -- follow_up_action_list[] apa adanya
+  mentah          JSONB,         -- balasan penuh, untuk melacak field baru
+  fetched_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_returns_shop_waktu ON returns (shop_id, create_time DESC);
+CREATE INDEX IF NOT EXISTS idx_returns_status ON returns (status);
+CREATE INDEX IF NOT EXISTS idx_returns_due ON returns (due_date) WHERE due_date IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_returns_order ON returns (order_sn);
+
+-- Posisi sapuan mundur per toko. Riwayat retur bisa panjang dan Shopee
+-- membatasi lebar rentang per panggilan, jadi penarikan dikerjakan
+-- sepotong demi sepotong dan posisinya disimpan supaya tiap putaran
+-- MELANJUTKAN, bukan mengulang dari awal.
+CREATE TABLE IF NOT EXISTS returns_sapuan (
+  shop_id       BIGINT PRIMARY KEY REFERENCES shops(shop_id) ON DELETE CASCADE,
+  mundur_sampai TIMESTAMPTZ,
+  selesai       BOOLEAN NOT NULL DEFAULT false,
+  ketemu        INTEGER NOT NULL DEFAULT 0,
+  hari_potong   INTEGER NOT NULL DEFAULT 15,   -- menyesuaikan sendiri kalau ditolak
+  last_run      TIMESTAMPTZ,
+  last_note     TEXT
+);
+
+-- ── printed_at untuk resi yang sudah telanjur dicetak ──
+-- print_count sempat naik tanpa mengisi printed_at, jadi penyaring
+-- "Waktu resi dicetak" buta terhadap resi yang benar-benar dicetak dari
+-- aplikasi ini — paling terasa pada instan/sameday yang resinya dicetak
+-- sebelum Pack dan tidak pernah discan.
+--
+-- Tanggal pastinya tidak tersimpan di mana pun, jadi dipakai penanda waktu
+-- terdekat yang PASTI tidak lebih awal dari saat resi dibuat: waktu
+-- pengiriman diatur, lalu waktu pesanan dibuat. Menebak "sekarang" akan
+-- menumpuk seluruh riwayat di hari deploy dan merusak laporan harian.
+UPDATE orders
+   SET printed_at = COALESCE(ship_arranged_at, created_time)
+ WHERE printed_at IS NULL
+   AND COALESCE(print_count, 0) > 0;
+
+-- ═══════════════════════════════════════════════════════════════════
+--  Isi Saldo Otomatis iklan — perbaikan dobel potong (14 Sep 2026)
+-- ═══════════════════════════════════════════════════════════════════
+--
+--  Shopee memotong "Biaya Isi Saldo Otomatis (dari Penghasilan)" langsung
+--  dari penghasilan tiap pesanan, lewat field get_escrow_detail bernama
+--  ads_escrow_top_up_fee_or_technical_support_fee.
+--
+--  Itu BUKAN biaya. Itu uang kita sendiri yang pindah ke dompet iklan,
+--  yang nanti keluar lagi ketika iklannya jalan dan tercatat di ad_spend.
+--  Karena laporan menghitung biaya platform sebagai (omzet - escrow_amount),
+--  uang yang sama terhitung DUA KALI: sekali sebagai biaya platform, sekali
+--  lagi sebagai iklan.
+--
+--  Terbukti pada pesanan 260831SP15N5FR: harga jual 765.520, top-up 42.375,
+--  dan penjumlahan seluruh biaya cocok persis dengan escrow_amount 518.094.
+
+--  ads_topup SENGAJA boleh NULL. NULL berarti "baris ini belum pernah
+--  ditarik dengan kode yang menyimpan top-up", dan itulah penanda yang
+--  dipakai tarikEscrow untuk menyegarkan seluruh riwayat. Setelah ditarik
+--  nilainya jadi angka (boleh 0), jadi barisnya tidak diambil lagi.
+--  Tidak perlu kolom pembukuan tambahan.
+ALTER TABLE order_escrow ADD COLUMN IF NOT EXISTS ads_topup NUMERIC(14,2);
+
+--  escrow_bersih = dana cair SEBELUM dipotong isi saldo iklan. Inilah yang
+--  dipakai semua perhitungan biaya platform dan penjualan mingguan.
+--
+--  escrow_amount yang asli DIBIARKAN apa adanya, karena itu memang uang
+--  tunai yang benar-benar masuk rekening — dipakai kartu "Dana diterima".
+--  Dua kolom, dua arti, jangan tertukar.
+--
+--  Kolom terhitung (GENERATED), jadi tidak mungkin melenceng dari rumusnya
+--  dan tidak ada tempat untuk lupa memperbarui.
+ALTER TABLE order_escrow ADD COLUMN IF NOT EXISTS escrow_bersih NUMERIC(14,2)
+  GENERATED ALWAYS AS (COALESCE(escrow_amount,0) + COALESCE(ads_topup,0)) STORED;
+
+CREATE INDEX IF NOT EXISTS idx_escrow_belum_segar
+  ON order_escrow (order_id) WHERE ads_topup IS NULL;
+
+-- ═══════════════════════════════════════════════════════════════════
+--  Beban operasional & toko manual — untuk Laporan Keuangan
+-- ═══════════════════════════════════════════════════════════════════
+--
+--  Sampai sekarang aplikasi tidak pernah memotong opex sama sekali, jadi
+--  angka "Laba bersih" di dashboard sebenarnya laba operasional
+--  marketplace — omzet dikurangi HPP, biaya platform, dan iklan saja.
+--  Gaji, cicilan, listrik, wifi, dan operasional gudang tidak punya
+--  tempat di mana pun.
+--
+--  Keputusan Prima: opex dicatat di TINGKAT GRUP, tidak dialokasikan
+--  per toko. Jadi tabel ini sengaja TIDAK punya kolom shop_id.
+
+CREATE TABLE IF NOT EXISTS opex (
+  id         BIGSERIAL PRIMARY KEY,
+  -- Selalu tanggal 1 bulan bersangkutan. Dipaksa di lib/opex.js supaya
+  -- tidak ada dua baris untuk bulan yang sama hanya karena beda tanggal.
+  bulan      DATE NOT NULL,
+  jenis      TEXT NOT NULL,
+  nominal    NUMERIC(14,2) NOT NULL DEFAULT 0,
+  catatan    TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (bulan, jenis)
+);
+
+CREATE INDEX IF NOT EXISTS idx_opex_bulan ON opex (bulan);
+
+--  Toko yang datanya TIDAK ditarik lewat API — sekarang cuma TikTok.
+--  Diinput bulanan, ikut dijumlah di Laporan Keuangan bulanan supaya
+--  angkanya sebanding dengan laporan Excel yang memuat Humaira TikTok.
+--
+--  TIDAK ikut di laporan mingguan: laporan mingguan berbasis tanggal
+--  dana cair per pesanan, dan data manual tidak punya rincian itu.
+--  Memaksakannya masuk hanya akan membuat angka mingguan menyesatkan.
+CREATE TABLE IF NOT EXISTS toko_manual (
+  id         BIGSERIAL PRIMARY KEY,
+  bulan      DATE NOT NULL,
+  nama       TEXT NOT NULL,
+  -- Penjualan = uang masuk bersih (Jumlah penyelesaian pembayaran),
+  -- sudah net seluruh potongan platform — sejajar dengan escrow_bersih
+  -- pada toko Shopee, bukan harga yang dibayar pembeli.
+  penjualan  NUMERIC(14,2) NOT NULL DEFAULT 0,
+  hpp        NUMERIC(14,2) NOT NULL DEFAULT 0,
+  -- Sudah termasuk PPN 11%, supaya sejajar dengan kolom "Iklan + PPN".
+  iklan      NUMERIC(14,2) NOT NULL DEFAULT 0,
+  catatan    TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  UNIQUE (bulan, nama)
+);
+
+CREATE INDEX IF NOT EXISTS idx_toko_manual_bulan ON toko_manual (bulan);
+
+-- ═══════════════════════════════════════════════════════════════════
+--  Bonus iklan Shopee — diunggah dari ekspor Riwayat Transaksi
+-- ═══════════════════════════════════════════════════════════════════
+--
+--  Metode pembukuan Prima: biaya iklan = (beban x 1,11) - bonus.
+--  Bonus dikurangkan SESUDAH PPN, karena rebate TIDAK dikenai PPN.
+--  Jangan tertukar dengan (beban - bonus) x 1,11 — selisihnya 11% dari
+--  nilai bonusnya.
+--
+--  Tanpa tabel ini biaya iklan selalu KELEBIHAN. Agustus 2026 selisihnya
+--  Rp 18,8 juta untuk seluruh toko Shopee.
+--
+--  KENAPA TIDAK DARI API: sudah dibuktikan tuntas dan jangan diulang.
+--  Seluruh daftar API Name kategori Ads diperiksa — isinya cuma performa
+--  campaign dan get_total_balance (saldo sesaat tanpa rincian asal).
+--  get_wallet_transaction_list disapu 500 baris untuk Humaira dan hanya
+--  memuat 8 jenis transaksi, tidak satu pun bonus; yang ada justru
+--  SPM_DEDUCT, yaitu uang KELUAR dari dompet penjual ke dompet iklan.
+--  Bonus masuk langsung ke dompet iklan, dan dompet itu tidak punya
+--  endpoint sama sekali.
+--
+--  Sumbernya: Shopee Ads > Riwayat Transaksi > ekspor CSV, satu berkas
+--  per jenis bonus. Berkasnya sendiri menyebutkan ID Toko dan rentang
+--  tanggalnya, jadi tidak ada yang perlu diketik.
+
+--  Disimpan PER HARI, bukan per bulan. Ekspornya memang per hari, dan
+--  dengan begitu laporan mingguan memakai angka nyata alih-alih bagi
+--  rata per hari kalender.
+--
+--  Sengaja TANPA batasan unik: satu tanggal bisa punya beberapa baris
+--  bonus yang sah (contoh nyata: 03/08/2026 ada dua baris proteksi ROAS
+--  bernilai berbeda). Pengulangan unggah ditangani dengan menghapus
+--  dulu seluruh baris toko+jenis di rentang berkas, lalu memasukkan
+--  ulang — lihat ganti() di lib/bonus-iklan.js.
+CREATE TABLE IF NOT EXISTS bonus_iklan (
+  id         BIGSERIAL PRIMARY KEY,
+  shop_id    BIGINT NOT NULL,
+  tanggal    DATE   NOT NULL,
+  jenis      TEXT   NOT NULL,          -- 'saldo' | 'roas'
+  nominal    NUMERIC(14,2) NOT NULL DEFAULT 0,
+  deskripsi  TEXT,
+  catatan    TEXT,
+  created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_bonus_iklan_cari
+  ON bonus_iklan (shop_id, tanggal);
