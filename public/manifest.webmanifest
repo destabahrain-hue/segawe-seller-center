@@ -1,0 +1,22 @@
+{
+  "name": "Segawe Seller Center",
+  "short_name": "Segawe",
+  "description": "Pusat kendali toko Shopee PT Segawe Jaya Mulia",
+  "start_url": "/pesanan",
+  "scope": "/",
+  "display": "standalone",
+  "orientation": "portrait-primary",
+  "background_color": "#F6F8FC",
+  "theme_color": "#2952E3",
+  "lang": "id",
+  "icons": [
+    { "src": "/icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" },
+    { "src": "/maskable-512.png", "sizes": "512x512", "type": "image/png", "purpose": "maskable" }
+  ],
+  "shortcuts": [
+    { "name": "Scan & Kirim", "url": "/pesanan/scan" },
+    { "name": "Gudang", "url": "/gudang" },
+    { "name": "Laporan Toko", "url": "/laporan-toko" }
+  ]
+}

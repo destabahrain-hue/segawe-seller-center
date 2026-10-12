@@ -35,7 +35,7 @@ Salin dari `.env.example`. Yang wajib:
 
 | Variabel | Isi |
 |---|---|
-| `SHOPEE_PARTNER_ID` | **Live Partner ID milik PT Segawe** — bukan `1239240` (app Numedix), bukan juga Test Partner ID `1241774` |
+| `SHOPEE_PARTNER_ID` | `1239240` |
 | `SHOPEE_PARTNER_KEY` | dari Open Platform Console |
 | `SHOPEE_HOST` | `https://partner.shopeemobile.com` (produksi) |
 | `APP_URL` | alamat publik Railway, tanpa garis miring di akhir |
@@ -82,7 +82,7 @@ dikumpulkan di satu berkas: **`lib/endpoints.js`**.
 
 Yang bertanda `TERKONFIRMASI` sudah terbukti jalan di proyek Ad Storm.
 Yang bertanda `PERIKSA` perlu dicocokkan: buka Open Platform Console →
-API Test Tool → Partner ID milik PT Segawe → pilih endpoint → **View API Details**,
+API Test Tool → Partner ID 1239240 → pilih endpoint → **View API Details**,
 lalu samakan path dan nama parameternya.
 
 Kalau ada yang meleset, perbaiki **hanya di berkas itu** — file lain tidak perlu disentuh.
@@ -126,5 +126,3 @@ npm install
 cp .env.example .env.local   # isi seperlunya
 npm run dev
 ```
-
- 

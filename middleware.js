@@ -102,10 +102,15 @@ export async function middleware(req) {
  *
  * Ikon bukan data rahasia, jadi tidak ada yang bocor dengan melewatkannya.
  *
+ * manifest.webmanifest dan sw.js juga dilewatkan. Keduanya diminta browser
+ * SEBELUM (dan kadang tanpa) cookie sesi saat aplikasi dipasang ke layar
+ * utama; kalau kena pengalihan ke /login, pemasangan PWA gagal diam-diam.
+ * Isinya cuma nama, warna, dan aturan cache — tidak ada data toko.
+ *
  * Callback TikTok TIDAK perlu masuk matcher — matcher hanya menentukan
  * berkas mana yang middleware-nya tidak dijalankan sama sekali, sementara
  * callback tetap perlu melewati fungsi di atas (dan dilepas lewat BEBAS).
  */
 export const config = {
-  matcher: ['/((?!_next/static|_next/image|favicon.ico|icon.png|apple-icon.png).*)'],
+  matcher: ['/((?!_next/static|_next/image|favicon.ico|icon.png|apple-icon.png|icon-192.png|icon-512.png|maskable-512.png|manifest.webmanifest|sw.js).*)'],
 };

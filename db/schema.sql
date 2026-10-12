@@ -733,3 +733,479 @@ CREATE TABLE IF NOT EXISTS bonus_iklan (
 
 CREATE INDEX IF NOT EXISTS idx_bonus_iklan_cari
   ON bonus_iklan (shop_id, tanggal);
+
+-- ── Perkiraan penghasilan Shopee untuk pesanan yang BELUM selesai ──
+--
+--  get_escrow_detail sudah memulangkan rincian penghasilan lengkap sejak
+--  pesanan dibayar (terbukti 22 Sep 2026 pada pesanan READY_TO_SHIP yang
+--  belum di-Pack: harga jual − komisi − layanan − biaya proses = escrow_amount,
+--  cocok sampai rupiah). Dengan ini biaya platform pesanan baru tidak perlu
+--  lagi DITAKSIR dengan rata-rata 180 hari — biaya campaign & voucher ikut
+--  terbaca per pesanan sejak hari pertama.
+--
+--  SENGAJA TABEL TERPISAH dari order_escrow. Di seluruh aplikasi,
+--  order_escrow.escrow_amount > 0 berarti "dana sudah final" dan menjadi
+--  dasar kartu Dana diterima, Laporan Mingguan, dan Laporan Keuangan
+--  (berdasarkan tanggal dana dilepas). Perkiraan TIDAK BOLEH menyentuh
+--  arti itu: yang memakai tabel ini hanya taksiran biaya di Laporan Toko,
+--  Dashboard, dan SKU Bocor. Begitu escrow final masuk, baris di sini
+--  tidak dipakai lagi dan disapu.
+CREATE TABLE IF NOT EXISTS order_escrow_perkiraan (
+  order_id        BIGINT PRIMARY KEY REFERENCES orders(id) ON DELETE CASCADE,
+  escrow_amount   NUMERIC(14,2) NOT NULL DEFAULT 0,
+  ads_topup       NUMERIC(14,2) NOT NULL DEFAULT 0,
+  commission_fee  NUMERIC(14,2) NOT NULL DEFAULT 0,
+  service_fee     NUMERIC(14,2) NOT NULL DEFAULT 0,
+  campaign_fee    NUMERIC(14,2) NOT NULL DEFAULT 0,
+  processing_fee  NUMERIC(14,2) NOT NULL DEFAULT 0,
+  fetched_at      TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- ── Gudang: jenis mutasi, supplier, petugas (pengganti sheet stok manual) ──
+--
+--  jenis membedakan ASAL mutasi, supaya laporan stok bisa dipecah seperti
+--  sheet lama (masuk supplier / dari retur / opname, keluar Shopee / TikTok /
+--  offline). direction tetap satu-satunya penentu tambah-kurang saldo:
+--    shopee       out   otomatis dari pesanan yang dikirim
+--    supplier     in    barang datang dari supplier
+--    retur        in    barang retur kembali ke rak
+--    tiktok       out   penjualan TikTok Shop (dicatat manual)
+--    offline      out   penjualan langsung (dicatat manual)
+--    lain_masuk   in / lain_keluar out   sampel, rusak, pinjam, dll
+--    opname       adjust  koreksi hasil hitung fisik (qty bertanda)
+--  batch_id mengelompokkan satu kali simpan formulir (satu surat jalan,
+--  satu rekap harian), supaya bisa dibatalkan utuh kalau salah input.
+ALTER TABLE stock_moves ADD COLUMN IF NOT EXISTS jenis        TEXT;
+ALTER TABLE stock_moves ADD COLUMN IF NOT EXISTS supplier     TEXT;
+ALTER TABLE stock_moves ADD COLUMN IF NOT EXISTS dicatat_oleh TEXT;
+ALTER TABLE stock_moves ADD COLUMN IF NOT EXISTS batch_id     TEXT;
+UPDATE stock_moves SET jenis = CASE
+    WHEN ref_type = 'order'                        THEN 'shopee'
+    WHEN direction = 'adjust' OR ref_type = 'opname' THEN 'opname'
+    WHEN direction = 'in'                          THEN 'supplier'
+    ELSE 'lain_keluar' END
+  WHERE jenis IS NULL;
+CREATE INDEX IF NOT EXISTS idx_moves_jenis ON stock_moves (jenis, moved_at);
+CREATE INDEX IF NOT EXISTS idx_moves_batch ON stock_moves (batch_id) WHERE batch_id IS NOT NULL;
+
+--  Supplier langganan per Master SKU, untuk mengelompokkan daftar belanja.
+ALTER TABLE master_sku ADD COLUMN IF NOT EXISTS supplier TEXT;
+
+-- ── Stock opname ──
+--  Tim mengisi hitungan fisik (draf); hanya akun master yang MENERAPKAN
+--  selisihnya ke stok. stok_sistem dipotret saat hitungan dicatat, jadi
+--  barang yang keluar-masuk SETELAH dihitung tidak ikut terkoreksi.
+CREATE TABLE IF NOT EXISTS opname (
+  id              BIGSERIAL PRIMARY KEY,
+  status          TEXT NOT NULL DEFAULT 'draf' CHECK (status IN ('draf','diterapkan','dibatalkan')),
+  catatan         TEXT,
+  dibuat_oleh     TEXT,
+  dibuat_at       TIMESTAMPTZ NOT NULL DEFAULT now(),
+  diterapkan_oleh TEXT,
+  diterapkan_at   TIMESTAMPTZ
+);
+CREATE TABLE IF NOT EXISTS opname_baris (
+  opname_id     BIGINT NOT NULL REFERENCES opname(id) ON DELETE CASCADE,
+  master_sku_id BIGINT NOT NULL REFERENCES master_sku(id) ON DELETE CASCADE,
+  stok_sistem   INTEGER NOT NULL,
+  stok_fisik    INTEGER NOT NULL,
+  dicatat_oleh  TEXT,
+  dicatat_at    TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (opname_id, master_sku_id)
+);
+--  Paling banyak satu draf berjalan, supaya dua orang tidak menghitung di
+--  dua lembar opname yang berbeda.
+CREATE UNIQUE INDEX IF NOT EXISTS idx_opname_satu_draf ON opname ((true)) WHERE status = 'draf';
+
+-- ── Perbaikan mundur ship_time dari jejak logistik (23 Sep 2026) ──
+--  Versi lama mengira "Menunggu pesanan diserahkan ke pihak jasa kirim"
+--  sebagai serah-terima, jadi ship_time = waktu Pack. Yang benar waktu
+--  langkah berstatus PICKED_UP / PICKUP_DONE. Idempoten: kalau nilainya
+--  sudah benar, tidak ada baris yang disentuh.
+UPDATE orders o SET ship_time = x.serah
+  FROM (
+    SELECT o2.id, MIN((e->>'waktu')::timestamptz) AS serah
+      FROM orders o2, jsonb_array_elements(o2.tracking_info) e
+     WHERE jsonb_typeof(o2.tracking_info) = 'array'
+       AND o2.created_time >= now() - interval '120 days'
+       AND UPPER(COALESCE(e->>'status','')) IN ('PICKED_UP','PICKUP_DONE','LOGISTICS_PICKUP_DONE')
+       AND (e->>'waktu') IS NOT NULL
+     GROUP BY o2.id
+  ) x
+ WHERE x.id = o.id AND o.ship_time IS DISTINCT FROM x.serah;
+
+-- ── Izin koreksi stok per akun ──
+--  Koreksi (+/−) dan pembatalan catatan gudang tadinya khusus akun master.
+--  Sekarang bisa dibuka per akun dari halaman Pengguna, tanpa memberi akses
+--  penuh master. Bawaannya mati: akun baru tidak bisa mengoreksi stok.
+ALTER TABLE users ADD COLUMN IF NOT EXISTS boleh_koreksi BOOLEAN NOT NULL DEFAULT false;
+
+-- ── Sidik pembeli & batas simpan data pribadi ──
+--
+--  pembeli_id adalah sidik SATU ARAH dari username pembeli. Dipakai untuk
+--  mengelompokkan pesanan milik orang yang sama (retensi, pelanggan
+--  berulang, segmen) TANPA menyimpan identitasnya. Sekali terisi tidak
+--  pernah dihapus, jadi riwayat retensi tetap utuh walau data pribadi
+--  pesanannya sudah dibersihkan.
+--
+--  Sidiknya dihitung di kode (lib/pembeli.js), bukan di SQL, karena butuh
+--  kunci rahasia dari environment.
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS pembeli_id TEXT;
+ALTER TABLE orders ADD COLUMN IF NOT EXISTS privasi_bersih_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS idx_orders_pembeli ON orders (shop_id, pembeli_id)
+  WHERE pembeli_id IS NOT NULL;
+--  Pencari pekerjaan untuk dua tugas berkala di lib/pembeli.js.
+CREATE INDEX IF NOT EXISTS idx_orders_pembeli_kosong ON orders (id)
+  WHERE pembeli_id IS NULL AND buyer_username IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_orders_privasi ON orders (created_time)
+  WHERE privasi_bersih_at IS NULL;
+
+ALTER TABLE returns ADD COLUMN IF NOT EXISTS pembeli_id TEXT;
+ALTER TABLE returns ADD COLUMN IF NOT EXISTS privasi_bersih_at TIMESTAMPTZ;
+
+--  Kapan penarikan awal toko ini diantrikan (dipakai halaman Toko Terhubung
+--  untuk membedakan "belum pernah ditarik" dari "sedang berjalan").
+ALTER TABLE shops ADD COLUMN IF NOT EXISTS tarik_awal_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS idx_jobs_tarik ON jobs (shop_id, kind, status);
+
+-- ── TikTok Shop ──
+--  SENGAJA TABEL SENDIRI, bukan baris di `shops`. Seluruh penyinkron Shopee
+--  membaca tokoAktif() dari shops; kalau toko TikTok ikut di sana, setiap
+--  putaran akan memanggil API Shopee memakai token TikTok dan gagal terus.
+--
+--  shop_cipher wajib disertakan di hampir semua panggilan TikTok dan
+--  berbeda per toko — tanpa itu balasannya "shop not authorized".
+CREATE TABLE IF NOT EXISTS tiktok_shops (
+  shop_id            TEXT PRIMARY KEY,
+  shop_name          TEXT,
+  shop_cipher        TEXT,
+  shop_code          TEXT,
+  region             TEXT,
+  seller_type        TEXT,
+  seller_name        TEXT,
+  open_id            TEXT,
+  access_token       TEXT,
+  refresh_token      TEXT,
+  expires_at         TIMESTAMPTZ,
+  refresh_expires_at TIMESTAMPTZ,
+  status             TEXT DEFAULT 'active',
+  last_error         TEXT,
+  last_sync_at       TIMESTAMPTZ,
+  connected_at       TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+
+-- ── Data TikTok Shop ──
+--  Tabel terpisah dari pesanan Shopee. Bentuk datanya berbeda cukup jauh
+--  (harga per baris, escrow diganti "statement", status memakai nama lain),
+--  dan mencampurnya ke tabel orders akan memaksa setiap laporan Shopee
+--  menyaring platform di semua kueri — gampang terlewat, dan sekali
+--  terlewat angkanya salah tanpa ketahuan.
+CREATE TABLE IF NOT EXISTS tiktok_orders (
+  order_id          TEXT PRIMARY KEY,
+  shop_id           TEXT NOT NULL,
+  status            TEXT,
+  order_type        TEXT,
+  create_time       TIMESTAMPTZ,
+  update_time       TIMESTAMPTZ,
+  rts_time          TIMESTAMPTZ,          -- diserahkan ke kurir
+  collection_time   TIMESTAMPTZ,          -- dijemput kurir
+  delivery_type     TEXT,
+  shipping_provider TEXT,
+  tracking_number   TEXT,
+  is_cod            BOOLEAN,
+  currency          TEXT,
+  -- Semua nilai uang dari TikTok datang sebagai string; disimpan numeric.
+  total_amount      NUMERIC(18,2),
+  sub_total         NUMERIC(18,2),
+  shipping_fee      NUMERIC(18,2),
+  original_shipping_fee NUMERIC(18,2),
+  platform_discount NUMERIC(18,2),
+  seller_discount   NUMERIC(18,2),
+  buyer_service_fee NUMERIC(18,2),
+  tax               NUMERIC(18,2),
+  -- Kota & provinsi dari district_info. TikTok TIDAK menyensornya seperti
+  -- Shopee, tapi nama penerima, telepon, dan alamat sengaja TIDAK disimpan.
+  kota              TEXT,
+  provinsi          TEXT,
+  pembeli_id        TEXT,                 -- sidik dari user_id, lihat lib/pembeli.js
+  fetched_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_tiktok_orders_waktu ON tiktok_orders (create_time DESC);
+CREATE INDEX IF NOT EXISTS idx_tiktok_orders_toko ON tiktok_orders (shop_id, create_time DESC);
+CREATE INDEX IF NOT EXISTS idx_tiktok_orders_status ON tiktok_orders (status);
+
+CREATE TABLE IF NOT EXISTS tiktok_order_items (
+  line_item_id      TEXT PRIMARY KEY,
+  order_id          TEXT NOT NULL REFERENCES tiktok_orders(order_id) ON DELETE CASCADE,
+  shop_id           TEXT NOT NULL,
+  product_id        TEXT,
+  product_name      TEXT,
+  sku_id            TEXT,
+  seller_sku        TEXT,
+  sku_name          TEXT,
+  sku_image         TEXT,
+  display_status    TEXT,
+  sale_price        NUMERIC(18,2),
+  original_price    NUMERIC(18,2),
+  platform_discount NUMERIC(18,2),
+  seller_discount   NUMERIC(18,2),
+  currency          TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_tiktok_items_order ON tiktok_order_items (order_id);
+CREATE INDEX IF NOT EXISTS idx_tiktok_items_sku ON tiktok_order_items (seller_sku);
+
+--  Statement = padanan escrow Shopee: berapa uang yang benar-benar masuk.
+CREATE TABLE IF NOT EXISTS tiktok_statements (
+  statement_id        TEXT PRIMARY KEY,
+  shop_id             TEXT NOT NULL,
+  statement_time      TIMESTAMPTZ,
+  payment_id          TEXT,
+  payment_status      TEXT,
+  payment_time        TIMESTAMPTZ,
+  currency            TEXT,
+  settlement_amount   NUMERIC(18,2),
+  revenue_amount      NUMERIC(18,2),
+  fee_amount          NUMERIC(18,2),
+  adjustment_amount   NUMERIC(18,2),
+  shipping_cost_amount NUMERIC(18,2),
+  net_sales_amount    NUMERIC(18,2),
+  fetched_at          TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_tiktok_statement_waktu ON tiktok_statements (statement_time DESC);
+
+CREATE TABLE IF NOT EXISTS tiktok_returns (
+  return_id         TEXT PRIMARY KEY,
+  shop_id           TEXT NOT NULL,
+  order_id          TEXT,
+  return_status     TEXT,
+  return_type       TEXT,
+  return_reason     TEXT,
+  return_reason_text TEXT,
+  refund_amount     NUMERIC(18,2),
+  shipping_fee_amount NUMERIC(18,2),
+  discount_amount   NUMERIC(18,2),
+  create_time       TIMESTAMPTZ,
+  update_time       TIMESTAMPTZ,
+  items             JSONB,
+  fetched_at        TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS idx_tiktok_returns_waktu ON tiktok_returns (create_time DESC);
+
+--  Penanda sampai mana pesanan sudah ditarik per toko, supaya penarikan
+--  berkala tidak mengulang dari awal.
+ALTER TABLE tiktok_shops ADD COLUMN IF NOT EXISTS pesanan_sampai TIMESTAMPTZ;
+ALTER TABLE tiktok_shops ADD COLUMN IF NOT EXISTS statement_sampai TIMESTAMPTZ;
+
+--  Penautan SKU TikTok ke Master SKU.
+--
+--  TIDAK memakai tabel sku_mapping yang sudah ada: kolom shop_id di sana
+--  BIGINT dan mengacu ke shops (Shopee), sementara shop_id TikTok berupa
+--  teks 19 digit di tabelnya sendiri. Memaksa keduanya jadi satu tabel
+--  berarti melonggarkan foreign key yang justru menjaga data Shopee.
+CREATE TABLE IF NOT EXISTS tiktok_sku_mapping (
+  id            BIGSERIAL PRIMARY KEY,
+  shop_id       TEXT NOT NULL,
+  seller_sku    TEXT NOT NULL,
+  master_sku_id BIGINT REFERENCES master_sku(id) ON DELETE SET NULL,
+  auto_linked   BOOLEAN NOT NULL DEFAULT false,
+  UNIQUE (shop_id, seller_sku)
+);
+CREATE INDEX IF NOT EXISTS idx_tiktok_map_master ON tiktok_sku_mapping (master_sku_id);
+
+--  Biaya iklan TikTok (GMV Max) — DIISI MANUAL.
+--
+--  Shopee memberi biaya iklan lewat API, TikTok tidak: iklan TikTok Shop
+--  dikelola lewat TikTok Ads (API bisnis yang terpisah, aplikasi dan
+--  otorisasinya sendiri). Daripada membiarkan laba TikTok terlihat lebih
+--  besar dari kenyataan, angkanya diisi tangan per hari per toko —
+--  sumbernya Seller Center, sama seperti yang selama ini dipakai di laporan
+--  bulanan.
+CREATE TABLE IF NOT EXISTS tiktok_ad_spend (
+  shop_id   TEXT NOT NULL,
+  day       DATE NOT NULL,
+  biaya     NUMERIC(18,2) NOT NULL DEFAULT 0,
+  catatan   TEXT,
+  diubah_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (shop_id, day)
+);
+
+-- ══════════════════════════════════════════════════════════════════════
+--  PESANAN GABUNGAN SHOPEE + TIKTOK (30 Sep 2026)
+--
+--  Halaman Pesanan kini satu untuk dua marketplace. Tabelnya TETAP
+--  terpisah (tiktok_orders tidak boleh masuk ke orders — penyinkron
+--  Shopee akan memanggil API Shopee untuk tiap baris di sana), yang
+--  digabung hanya CARA MEMBACANYA, lewat dua view di bawah.
+--
+--  Pesanan TikTok diterjemahkan ke kosakata status Shopee supaya tab,
+--  filter, dan pengurutan yang sudah ada berlaku apa adanya:
+--     AWAITING_SHIPMENT   → READY_TO_SHIP       (tab Pesanan baru)
+--     AWAITING_COLLECTION → PROCESSED + diatur  (tab Sedang dikemas)
+--     IN_TRANSIT / PARTIALLY_SHIPPING → SHIPPED (tab Dikirim)
+--     DELIVERED           → TO_CONFIRM_RECEIVE  (tab Dikirim)
+--     COMPLETED / CANCELLED sama
+--     UNPAID / ON_HOLD    → UNPAID              (tab Belum dibayar)
+--  Status aslinya tetap dibawa di kolom status_asli dan itu yang tampil.
+--
+--  id pesanan TikTok = NEGATIF dari order_id-nya. Id Shopee selalu
+--  positif (BIGSERIAL), jadi tidak mungkin bertabrakan, dan setiap rute
+--  aksi Shopee (Pack, cetak resi, sisihkan) yang mencari `orders.id`
+--  otomatis tidak menemukan pesanan TikTok — tidak ada yang bisa
+--  terkirim ke API yang salah.
+-- ══════════════════════════════════════════════════════════════════════
+ALTER TABLE tiktok_orders ADD COLUMN IF NOT EXISTS batas_kirim TIMESTAMPTZ;
+ALTER TABLE tiktok_orders ADD COLUMN IF NOT EXISTS bayar_time  TIMESTAMPTZ;
+ALTER TABLE tiktok_orders ADD COLUMN IF NOT EXISTS paket_id    TEXT;
+ALTER TABLE tiktok_shops  ADD COLUMN IF NOT EXISTS segar_kursor TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS idx_tiktok_orders_update ON tiktok_orders (update_time DESC);
+
+-- ══════════════════════════════════════════════════════════════════════
+--  TRANSAKSI STATEMENT TIKTOK (1 Okt 2026) — sumber Laporan Keuangan TikTok
+--  Satu baris per transaksi di statement: pesanan yang cair, potongan
+--  iklan, penyesuaian. Dibuktikan lewat /api/tiktok/uji-endpoint.
+--  Hanya angka yang dipakai laporan yang disimpan — bukan JSON mentah —
+--  supaya volume Postgres yang pernah penuh tidak terbebani.
+-- ══════════════════════════════════════════════════════════════════════
+ALTER TABLE tiktok_statements ADD COLUMN IF NOT EXISTS tx_ditarik_at TIMESTAMPTZ;
+ALTER TABLE tiktok_statements ADD COLUMN IF NOT EXISTS tx_jumlah INTEGER;
+CREATE TABLE IF NOT EXISTS tiktok_statement_tx (
+  statement_id        TEXT NOT NULL,
+  tx_id               TEXT NOT NULL,
+  shop_id             TEXT NOT NULL,
+  statement_time      TIMESTAMPTZ,
+  order_id            TEXT,
+  order_create_time   TIMESTAMPTZ,
+  tipe                TEXT,
+  settlement_amount   NUMERIC(18,2),
+  revenue_amount      NUMERIC(18,2),
+  fee_amount          NUMERIC(18,2),
+  shipping_cost_amount NUMERIC(18,2),
+  adjustment_amount   NUMERIC(18,2),
+  gross_sales_amount  NUMERIC(18,2),
+  net_sales_amount    NUMERIC(18,2),
+  platform_commission_amount NUMERIC(18,2),
+  transaction_fee_amount NUMERIC(18,2),
+  affiliate_commission_amount NUMERIC(18,2),
+  affiliate_ads_commission_amount NUMERIC(18,2),
+  seller_discount_amount NUMERIC(18,2),
+  platform_discount_amount NUMERIC(18,2),
+  customer_payment_amount NUMERIC(18,2),
+  fetched_at          TIMESTAMPTZ NOT NULL DEFAULT now(),
+  PRIMARY KEY (statement_id, tx_id)
+);
+CREATE INDEX IF NOT EXISTS idx_tt_tx_waktu ON tiktok_statement_tx (statement_time);
+CREATE INDEX IF NOT EXISTS idx_tt_tx_order ON tiktok_statement_tx (order_id);
+
+-- ══════════════════════════════════════════════════════════════════════
+--  ATUR KIRIM & CETAK RESI TIKTOK DARI NSC (1 Okt 2026)
+--  atur_kirim_at terisi begitu Ship Package berhasil — pesanan langsung
+--  pindah ke tab Sedang dikemas tanpa menunggu sinkron berikutnya.
+--  cetak_count/dicetak_at = print_count/printed_at versi TikTok, supaya
+--  penjaga resi kembar dan saringan Status resi berlaku sama.
+-- ══════════════════════════════════════════════════════════════════════
+ALTER TABLE tiktok_orders ADD COLUMN IF NOT EXISTS atur_kirim_at     TIMESTAMPTZ;
+ALTER TABLE tiktok_orders ADD COLUMN IF NOT EXISTS atur_kirim_metode TEXT;
+ALTER TABLE tiktok_orders ADD COLUMN IF NOT EXISTS cetak_count       INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE tiktok_orders ADD COLUMN IF NOT EXISTS dicetak_at        TIMESTAMPTZ;
+
+-- ══════════════════════════════════════════════════════════════════════
+--  SCAN & STOK TIKTOK (2 Okt 2026)
+--  packed_at     — discan di Scan & Kirim (sama artinya dengan orders).
+--  stok_applied  — stok gudang sudah dipotong untuk pesanan ini.
+--  Potongan stok TikTok memakai ref_type 'tiktok_order' supaya tidak pernah
+--  bertabrakan dengan id pesanan Shopee di ref_type 'order'.
+-- ══════════════════════════════════════════════════════════════════════
+ALTER TABLE tiktok_orders ADD COLUMN IF NOT EXISTS packed_at    TIMESTAMPTZ;
+ALTER TABLE tiktok_orders ADD COLUMN IF NOT EXISTS stok_applied BOOLEAN NOT NULL DEFAULT false;
+CREATE INDEX IF NOT EXISTS idx_tiktok_resi_norm
+  ON tiktok_orders (upper(replace(tracking_number, ' ', '')));
+ALTER TABLE scan_log ADD COLUMN IF NOT EXISTS toko_nama TEXT;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_moves_tiktok_order
+  ON stock_moves (ref_type, ref_id, master_sku_id) WHERE ref_type = 'tiktok_order';
+
+-- Tayangan & klik iklan per item per hari (Laporan SKU, 6 Okt 2026).
+-- Baris lama bernilai 0 sampai ditarik ulang.
+ALTER TABLE ad_spend_item ADD COLUMN IF NOT EXISTS impression BIGINT NOT NULL DEFAULT 0;
+ALTER TABLE ad_spend_item ADD COLUMN IF NOT EXISTS clicks     BIGINT NOT NULL DEFAULT 0;
+
+DROP VIEW IF EXISTS pesanan_item_v;
+DROP VIEW IF EXISTS pesanan_v;
+
+CREATE VIEW pesanan_v AS
+SELECT o.id,
+       'shopee'::text        AS platform,
+       o.shop_id::text       AS shop_id,
+       s.shop_name,
+       o.order_sn,
+       o.status,
+       o.status              AS status_asli,
+       o.buyer_username, o.region, o.city, o.district, o.zipcode, o.address,
+       o.recipient_name, o.phone, o.buyer_message, o.payment_method,
+       o.carrier, o.tracking_no, o.tracking_status, o.tracking_info,
+       o.package_number, o.pickup_code,
+       o.total_amount, o.created_time, o.paid_at, o.ship_by_date,
+       o.printed_at, o.print_count, o.ship_arranged_at, o.packed_at,
+       o.ship_time, o.completed_at,
+       o.cancel_reason, o.cancel_by, o.cancel_req_at, o.cancelled_at,
+       o.pack_gagal_at, o.pack_gagal_jenis, o.pack_gagal_kode, o.pack_gagal_pesan,
+       o.disisihkan_at, o.disisihkan_oleh, o.disisihkan_alasan,
+       o.stock_applied
+  FROM orders o
+  LEFT JOIN shops s ON s.shop_id = o.shop_id
+UNION ALL
+SELECT CASE WHEN t.order_id ~ '^[0-9]{1,18}$' THEN -(t.order_id::bigint) END,
+       'tiktok',
+       t.shop_id,
+       ts.shop_name,
+       t.order_id,
+       CASE t.status
+         WHEN 'AWAITING_SHIPMENT'   THEN 'READY_TO_SHIP'
+         WHEN 'PROCESSING'          THEN 'READY_TO_SHIP'
+         WHEN 'AWAITING_COLLECTION' THEN 'PROCESSED'
+         WHEN 'PARTIALLY_SHIPPING'  THEN 'SHIPPED'
+         WHEN 'IN_TRANSIT'          THEN 'SHIPPED'
+         WHEN 'DELIVERED'           THEN 'TO_CONFIRM_RECEIVE'
+         WHEN 'ON_HOLD'             THEN 'UNPAID'
+         ELSE t.status END,
+       t.status,
+       NULL, t.provinsi, t.kota, NULL, NULL, NULL,
+       NULL, NULL, NULL,
+       CASE WHEN t.is_cod THEN 'COD' END,
+       t.shipping_provider, t.tracking_number, NULL, NULL::jsonb,
+       t.paket_id, NULL,
+       t.total_amount, t.create_time, t.bayar_time, t.batas_kirim,
+       t.dicetak_at, t.cetak_count,
+       -- "Diatur kirim" = penjual sudah menyatakan siap kirim di TikTok,
+       -- lewat NSC (atur_kirim_at) atau lewat Seller Center (status).
+       COALESCE(t.atur_kirim_at,
+         CASE WHEN t.status IN ('AWAITING_COLLECTION','PARTIALLY_SHIPPING','IN_TRANSIT',
+                                'DELIVERED','COMPLETED')
+              THEN COALESCE(t.rts_time, t.update_time) END),
+       t.packed_at,
+       CASE WHEN t.status IN ('PARTIALLY_SHIPPING','IN_TRANSIT','DELIVERED','COMPLETED')
+            THEN COALESCE(t.collection_time, t.rts_time) END,
+       CASE WHEN t.status = 'COMPLETED' THEN t.update_time END,
+       NULL, NULL, NULL::timestamptz,
+       CASE WHEN t.status = 'CANCELLED' THEN t.update_time END,
+       NULL::timestamptz, NULL, NULL, NULL,
+       NULL::timestamptz, NULL, NULL,
+       t.stok_applied
+  FROM tiktok_orders t
+  LEFT JOIN tiktok_shops ts ON ts.shop_id = t.shop_id;
+
+--  Baris barang gabungan. TikTok menyimpan SATU BARIS PER UNIT, jadi di
+--  sini dikelompokkan per SKU + harga supaya tampil "× 2" seperti Shopee,
+--  bukan dua baris kembar.
+CREATE VIEW pesanan_item_v AS
+SELECT oi.id, oi.order_id, 'shopee'::text AS platform,
+       oi.item_id::text AS item_id, oi.item_name, oi.item_sku, oi.model_sku,
+       oi.qty, oi.price, oi.image_url
+  FROM order_items oi
+UNION ALL
+SELECT -(abs(hashtext(MIN(i.line_item_id)))::bigint) - 1,
+       CASE WHEN i.order_id ~ '^[0-9]{1,18}$' THEN -(i.order_id::bigint) END,
+       'tiktok',
+       MAX(i.product_id), i.product_name, i.seller_sku, NULL,
+       COUNT(*)::int, i.sale_price, MAX(i.sku_image)
+  FROM tiktok_order_items i
+ GROUP BY i.order_id, i.product_name, i.seller_sku, i.sale_price;

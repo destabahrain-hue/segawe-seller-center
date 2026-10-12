@@ -21,7 +21,7 @@ Yang bertanda PERIKSA:
 | ubah stok | `/api/v2/product/update_stock` |
 | belanja iklan harian | `/api/v2/ads/get_all_cpc_ads_daily_performance` |
 
-Cara mengecek: Open Platform Console → API Test Tool → Partner ID **milik PT Segawe Jaya Mulia** (bukan 1239240 punya Numedix) →
+Cara mengecek: Open Platform Console → API Test Tool → Partner ID **1239240** →
 pilih kategori → pilih nama API → **View API Details**.
 Cocokkan path dan nama parameter. Kalau beda, perbaiki di `lib/endpoints.js` saja.
 
