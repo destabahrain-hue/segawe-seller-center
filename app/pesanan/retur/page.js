@@ -51,6 +51,28 @@ const STATUS = {
   REFUND_PAID:['Refund dibayar', 'b-neg'],
 };
 
+/**
+ * Status BARANG retur, terpisah dari status permintaannya.
+ *
+ * arrived_at_wh dari Shopee: 1 = belum sampai gudang, 3 = sudah sampai,
+ * 2 = ditolak, 4 = dibatalkan. Yang tidak perlu kirim balik (needs_logistics
+ * false) tidak punya perjalanan barang sama sekali — itu refund saja.
+ */
+const BARANG = [
+  ['semua',  'Semua'],
+  ['jalan',  'Retur di jalan'],
+  ['sampai', 'Retur sudah sampai'],
+  ['tanpa',  'Tanpa kirim balik'],
+];
+
+const KONDISI_BARANG = {
+  semua:  'TRUE',
+  jalan:  `r.needs_logistics IS NOT FALSE AND COALESCE(r.arrived_at_wh, 1) = 1
+           AND r.status NOT IN ('CLOSED','CANCELLED')`,
+  sampai: `r.arrived_at_wh = 3`,
+  tanpa:  `r.needs_logistics = false`,
+};
+
 const SARING = [
   ['perlu',  'Perlu ditanggapi'],
   ['lewat',  'Tenggat lewat'],
@@ -79,12 +101,13 @@ export default async function Retur({ searchParams }) {
   const uang = bolehUang(await peranSekarang());
 
   const saring = KONDISI[searchParams?.f] ? searchParams.f : 'perlu';
+  const barang = KONDISI_BARANG[searchParams?.b] ? searchParams.b : 'semua';
   const toko = searchParams?.toko || null;
   const cari = (searchParams?.cari || '').trim() || null;
   const perHalaman = bacaPer(searchParams?.per);
   const halaman = Math.max(Number(searchParams?.hal) || 1, 1);
 
-  const w = [KONDISI[saring]];
+  const w = [KONDISI[saring], KONDISI_BARANG[barang]];
   const p = [];
   if (toko) { p.push(Number(toko)); w.push(`r.shop_id = $${p.length}`); }
   if (cari) {
@@ -101,7 +124,8 @@ export default async function Retur({ searchParams }) {
         ORDER BY r.due_date NULLS LAST, r.create_time DESC
         LIMIT ${perHalaman} OFFSET ${(halaman - 1) * perHalaman}`, p),
     q(`SELECT COUNT(*)::int AS n FROM returns r WHERE ${where}`, p),
-    q(`SELECT ${SARING.map(([k]) => `COUNT(*) FILTER (WHERE ${KONDISI[k]})::int AS ${k}`).join(', ')}
+    q(`SELECT ${SARING.map(([k]) => `COUNT(*) FILTER (WHERE ${KONDISI[k]})::int AS ${k}`).join(', ')},
+              ${BARANG.map(([k]) => `COUNT(*) FILTER (WHERE ${KONDISI_BARANG[k]})::int AS b_${k}`).join(', ')}
          FROM returns r`),
     q(`SELECT s.shop_id, s.shop_name, COUNT(r.*)::int AS n
          FROM shops s LEFT JOIN returns r ON r.shop_id = s.shop_id
@@ -114,7 +138,8 @@ export default async function Retur({ searchParams }) {
   const h = hitung[0] || {};
 
   const qs = (ubah = {}) => {
-    const v = { f: saring === 'perlu' ? null : saring, toko, cari,
+    const v = { f: saring === 'perlu' ? null : saring,
+                b: barang === 'semua' ? null : barang, toko, cari,
                 per: perHalaman === 50 ? null : perHalaman,
                 hal: halaman === 1 ? null : halaman, ...ubah };
     const u = new URLSearchParams();
@@ -157,6 +182,16 @@ export default async function Retur({ searchParams }) {
             ))}
           </div>
         </div>
+        <div className="filter-row">
+          <div className="filter-key">Barang retur</div>
+          <div className="filter-vals">
+            {BARANG.map(([k, label]) => (
+              <a key={k} className="chip" href={qs({ b: k, hal: null })} aria-pressed={barang === k}>
+                {label}<span className="n">{num(h[`b_${k}`] ?? 0)}</span>
+              </a>
+            ))}
+          </div>
+        </div>
         {tokoList.length > 1 && (
           <div className="filter-row">
             <div className="filter-key">Toko</div>
@@ -175,7 +210,8 @@ export default async function Retur({ searchParams }) {
 
       <div className="card">
         <div className="card-head">
-          <h2>{SARING.find(([k]) => k === saring)?.[1]}</h2>
+          <h2>{SARING.find(([k]) => k === saring)?.[1]}
+            {barang !== 'semua' && <span className="t-mute"> · {BARANG.find(([k]) => k === barang)?.[1]}</span>}</h2>
           <span className="badge b-mute">{num(total)}</span>
         </div>
 
@@ -205,6 +241,11 @@ export default async function Retur({ searchParams }) {
                 <span className="t-mute">{r.shop_name || `Toko ${r.shop_id}`}</span>
                 <span className={'badge ' + warna}>{labelStatus}</span>
                 {r.solution === 1 && <span className="badge b-mute">Refund saja</span>}
+                {r.needs_logistics === false
+                  ? <span className="badge b-mute">Tanpa kirim balik</span>
+                  : r.arrived_at_wh === 3
+                    ? <span className="badge b-pos">Barang sudah sampai</span>
+                    : <span className="badge b-info">Barang di jalan</span>}
                 {r.validation_type === 'warehouse_validation' &&
                   <span className="badge b-mute">Cek di gudang Shopee</span>}
                 <div className="spacer" style={{ flex: 1 }} />
@@ -228,10 +269,15 @@ export default async function Retur({ searchParams }) {
 
                 <div className="stack"><span className="k">Barang</span>
                   {item.length ? item.slice(0, 3).map((x, i) => (
-                    <span key={i} className="s">
-                      {x.name}
-                      <span className="t-mute"> × {x.amount}</span>
-                      {x.item_sku && <div className="mono t-mute">{x.variation_sku || x.item_sku}</div>}
+                    <span key={i} className="s" style={{ display: 'flex', gap: 8, alignItems: 'flex-start' }}>
+                      {x.image_url && <img src={x.image_url} alt="" width={34} height={34} loading="lazy"
+                                           style={{ borderRadius: 6, objectFit: 'cover', flex: 'none',
+                                                    border: '1px solid var(--line)' }} />}
+                      <span>
+                        {x.name}
+                        <span className="t-mute"> × {x.amount}</span>
+                        {x.item_sku && <div className="mono t-mute">{x.variation_sku || x.item_sku}</div>}
+                      </span>
                     </span>
                   )) : <span className="v t-mute">—</span>}
                   {item.length > 3 && (
@@ -285,7 +331,18 @@ export default async function Retur({ searchParams }) {
                       <span className="mono">{r.tracking_number}</span>
                     </span>
                   )}
-                  {!r.needs_logistics && <span className="s t-mute">Tanpa pengiriman balik</span>}
+                  {r.needs_logistics === false
+                    ? <span className="s t-mute">Tanpa pengiriman balik — refund tanpa barang kembali</span>
+                    : <span className="s">
+                        <span className="t-mute">Barang retur: </span>
+                        {r.arrived_at_wh === 3 ? 'sudah sampai'
+                          : r.arrived_at_wh === 2 ? 'ditolak'
+                          : r.arrived_at_wh === 4 ? 'dibatalkan'
+                          : 'masih di jalan'}
+                      </span>}
+                  {r.arrived_at_wh === 3 && (
+                    <span className="s t-mute">Catat masuk kembali lewat Gudang › jenis <b>Retur</b></span>
+                  )}
                 </div>
               </div>
             </article>

@@ -1,6 +1,6 @@
 import Shell from '../Shell';
 import { Kosong, Catatan, Galat } from '../UI';
-import { TambahPengguna, UbahPeranAkun, AksiPengguna, TombolPeran, HapusPeran } from './Kelola';
+import { TambahPengguna, UbahPeranAkun, AksiPengguna, TombolPeran, HapusPeran, EditAkun, SaklarKoreksi } from './Kelola';
 import { ensureSchema, q } from '@/lib/db';
 import { daftarPeran, peranSekarang, bolehKelola, HALAMAN, akunMaster } from '@/lib/auth';
 import { jam } from '@/lib/fmt';
@@ -13,7 +13,7 @@ export default async function Pengguna() {
   try {
     await ensureSchema();
     [rows, peran] = await Promise.all([
-      q(`SELECT u.id, u.nama, u.username, u.aktif, u.last_login, u.role_id, r.nama AS peran_nama
+      q(`SELECT u.id, u.nama, u.username, u.aktif, u.last_login, u.role_id, u.boleh_koreksi, r.nama AS peran_nama
          FROM users u LEFT JOIN roles r ON r.id = u.role_id
          ORDER BY u.aktif DESC, u.nama`),
       daftarPeran(),
@@ -135,7 +135,8 @@ export default async function Pengguna() {
             <table>
               <thead><tr>
                 <th>Nama</th><th>Nama pengguna</th><th style={{ width: 170 }}>Peran</th>
-                <th>Status</th><th>Terakhir masuk</th><th style={{ width: 230 }}></th>
+                <th style={{ width: 110 }}>Koreksi stok</th>
+                <th>Status</th><th>Terakhir masuk</th><th style={{ width: 280 }}></th>
               </tr></thead>
               <tbody>
                 {rows.map((u) => (
@@ -144,13 +145,19 @@ export default async function Pengguna() {
                     <td className="mono">{u.username}</td>
                     <td><UbahPeranAkun id={u.id} nilai={u.role_id}
                                        peran={JSON.parse(JSON.stringify(peran))} /></td>
+                    <td><SaklarKoreksi id={u.id} nilai={u.boleh_koreksi} /></td>
                     <td><span className={'badge ' + (u.aktif ? 'b-pos' : 'b-mute')}>
                       {u.aktif ? 'Aktif' : 'Nonaktif'}</span></td>
                     <td className="t-mute">{u.last_login ? jam(u.last_login) : 'belum pernah'}</td>
-                    <td><AksiPengguna id={u.id} aktif={u.aktif} /></td>
+                    <td>
+                      <div style={{ display: 'flex', gap: 6, justifyContent: 'flex-end' }}>
+                        <EditAkun akun={{ id: u.id, nama: u.nama, username: u.username, boleh_koreksi: u.boleh_koreksi }} />
+                        <AksiPengguna id={u.id} aktif={u.aktif} />
+                      </div>
+                    </td>
                   </tr>
                 ))}
-                {!rows.length && <tr><td colSpan={6}>
+                {!rows.length && <tr><td colSpan={7}>
                   <Kosong judul="Belum ada pengguna"
                           anak="Tambahkan akun untuk tiap anggota tim, lalu beri peran sesuai pekerjaannya." />
                 </td></tr>}

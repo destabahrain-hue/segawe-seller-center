@@ -1,7 +1,9 @@
 import Shell from '../Shell';
 import { Catatan } from '../UI';
 import Aksi from './Aksi';
+import Tarik from './Tarik';
 import { ensureSchema, q } from '@/lib/db';
+import { statusTarikSemua } from '@/lib/tarik';
 import { jam } from '@/lib/fmt';
 import { IPlus } from '../Icons';
 
@@ -13,10 +15,12 @@ export default async function Toko({ searchParams }) {
     SELECT s.*,
            (SELECT COUNT(*) FROM orders o WHERE o.shop_id = s.shop_id) AS pesanan
     FROM shops s ORDER BY s.shop_name NULLS LAST, s.shop_id`);
+  const status = await statusTarikSemua().catch(() => ({}));
   const hasil = searchParams?.hasil;
 
   return (
-    <Shell judul="Toko Terhubung" rute="/toko">
+    <Shell judul="Toko Terhubung" rute="/toko"
+           kanan={<a className="btn btn-sm" href="/tiktok">TikTok Shop</a>}>
       {hasil === 'berhasil' && (
         <Catatan>Toko <b>{searchParams.shop}</b> berhasil dihubungkan. Tekan <b>Sinkron sekarang</b> untuk menarik pesanannya.</Catatan>
       )}
@@ -62,6 +66,8 @@ export default async function Toko({ searchParams }) {
                 {Number(t.pesanan)} pesanan tersimpan · sinkron terakhir {jam(t.last_sync_at)}
               </p>
 
+              <Tarik shopId={String(t.shop_id)} awal={status[String(t.shop_id)] || null} terhubung={sehat} />
+
               <Aksi shopId={String(t.shop_id)} nama={t.shop_name || `Toko ${t.shop_id}`} terhubung={sehat} />
             </div>
           );
@@ -69,8 +75,14 @@ export default async function Toko({ searchParams }) {
 
         <a className="shop add" href="/api/auth/shopee">
           <IPlus width={22} height={22} />
-          <span style={{ fontWeight: 600, fontSize: 13 }}>Hubungkan toko</span>
+          <span style={{ fontWeight: 600, fontSize: 13 }}>Hubungkan toko Shopee</span>
           <span style={{ fontSize: 12 }}>Lewat izin resmi Shopee</span>
+        </a>
+
+        <a className="shop add" href="/api/tiktok/hubungkan">
+          <IPlus width={22} height={22} />
+          <span style={{ fontWeight: 600, fontSize: 13 }}>Hubungkan toko TikTok</span>
+          <span style={{ fontSize: 12 }}>Lewat izin resmi TikTok Shop</span>
         </a>
       </div>
 

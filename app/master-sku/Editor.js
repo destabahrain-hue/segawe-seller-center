@@ -1,24 +1,99 @@
 'use client';
 import { useState } from 'react';
 
-export function HppInput({ id, awal }) {
+/**
+ * Kotak HPP dengan TANGGAL BERLAKU.
+ *
+ * HPP disimpan sebagai riwayat, bukan satu angka yang menimpa: tiap
+ * catatan punya tanggal mulai berlaku, dan laporan memakai catatan yang
+ * berlaku pada tanggal PESANAN. Jadi mengubah harga beli hari ini tidak
+ * menggeser laporan bulan-bulan yang sudah ditutup — itu memang yang
+ * diinginkan.
+ *
+ * Tapi kalau tim terlambat memperbarui — harga naik 5 Agustus dan baru
+ * diinput September — catatannya perlu dimasukkan dengan tanggal mundur.
+ * Itulah gunanya isian tanggal di sini. Sebelumnya tanggalnya selalu
+ * hari ini dan koreksi mundur cuma bisa lewat database.
+ */
+export function HppInput({ id, awal, tanggalAwal }) {
   const [v, setV] = useState(awal ?? '');
+  const [tgl, setTgl] = useState(
+    (tanggalAwal || new Date().toISOString().slice(0, 10)).slice(0, 10));
   const [st, setSt] = useState('');
-  async function simpan() {
-    setSt('…');
+  const [riwayat, setRiwayat] = useState(null);
+
+  async function kirim(body) {
     const r = await fetch('/api/master-sku', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ aksi: 'hpp', id, hpp: Number(String(v).replace(/\D/g, '')) }),
+      body: JSON.stringify(body),
     });
-    setSt(r.ok ? '✓' : '✕');
+    return r.json().catch(() => ({ ok: r.ok }));
+  }
+
+  async function simpan() {
+    setSt('…');
+    const j = await kirim({
+      aksi: 'hpp', id,
+      hpp: Number(String(v).replace(/\D/g, '')),
+      effective_from: tgl,
+    });
+    setSt(j.ok ? '✓' : '✕');
+    if (j.ok && riwayat) muatRiwayat();
     setTimeout(() => setSt(''), 1600);
   }
+
+  async function muatRiwayat() {
+    const j = await kirim({ aksi: 'riwayat-hpp', id });
+    setRiwayat(j.ok ? (j.riwayat || []) : []);
+  }
+
+  async function hapus(hid) {
+    if (!confirm('Hapus catatan HPP ini? Laporan periode yang memakainya akan berubah.')) return;
+    await kirim({ aksi: 'hapus-hpp', id: hid });
+    muatRiwayat();
+  }
+
+  const rp = (n) => Number(n || 0).toLocaleString('id-ID');
+
   return (
-    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6 }}>
+    <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, position: 'relative' }}>
       <input className="hpp-in num" value={v} aria-label="HPP"
-             onChange={(e) => setV(e.target.value)} onBlur={simpan}
-             onKeyDown={(e) => e.key === 'Enter' && e.currentTarget.blur()} />
+             onChange={(e) => setV(e.target.value)}
+             onKeyDown={(e) => e.key === 'Enter' && simpan()} />
+      <input type="date" value={tgl} aria-label="Berlaku sejak"
+             style={{ fontSize: 12, padding: '2px 4px' }}
+             onChange={(e) => setTgl(e.target.value)} />
+      <button className="btn btn-sm" onClick={simpan}>Simpan</button>
+      <button className="btn btn-sm" title="Riwayat HPP"
+              onClick={() => (riwayat ? setRiwayat(null) : muatRiwayat())}>⋯</button>
       <span className="t-mute" style={{ width: 12, fontSize: 12 }}>{st}</span>
+
+      {riwayat && (
+        <div className="card" style={{
+          position: 'absolute', top: '100%', right: 0, zIndex: 20,
+          minWidth: 260, padding: 10, fontSize: 13,
+        }}>
+          {riwayat.length === 0 ? 'Belum ada catatan HPP.' : (
+            <table className="wide">
+              <thead><tr><th>Berlaku sejak</th><th className="t-right">HPP</th><th /></tr></thead>
+              <tbody>
+                {riwayat.map((h) => (
+                  <tr key={h.id}>
+                    <td>{String(h.effective_from).slice(0, 10)}</td>
+                    <td className="t-right">{rp(h.hpp)}</td>
+                    <td className="t-right">
+                      <button className="btn btn-sm" onClick={() => hapus(h.id)}>×</button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          )}
+          <div style={{ opacity: 0.7, marginTop: 6 }}>
+            Laporan memakai catatan yang berlaku pada tanggal pesanan.
+          </div>
+        </div>
+      )}
     </span>
   );
 }

@@ -2,7 +2,8 @@ import Shell from '../Shell';
 import AutoSegar from '../AutoSegar';
 import { Kpi, Kosong } from '../UI';
 import { ensureSchema } from '@/lib/db';
-import { ringkasan, deret, perSku } from '@/lib/report';
+import { perSku } from '@/lib/report';
+import { ringkasanGabung, deretGabung } from '@/lib/gabung';
 import { rentang, sebelumnya } from '@/lib/rentang';
 import { rp, num, pct } from '@/lib/fmt';
 
@@ -13,8 +14,8 @@ export default async function Realtime() {
   await ensureSchema();
   const r = rentang('hari-ini');
   const [kini, lalu, jamJam, produk] = await Promise.all([
-    ringkasan(r), ringkasan(sebelumnya(r)),
-    deret({ ...r, satuan: 'hour' }), perSku({ ...r, limit: 8 }),
+    ringkasanGabung(r), ringkasanGabung(sebelumnya(r)),
+    deretGabung({ ...r, satuan: 'hour' }), perSku({ ...r, limit: 8 }),
   ]);
   const t = kini.total, l = lalu.total;
   const naik = (a, b) => (b ? ((a - b) / b) * 100 : 0);
@@ -30,7 +31,7 @@ export default async function Realtime() {
         <span className="live-dot" aria-hidden="true" />
         <span className="live-t">Diperbarui {new Date().toLocaleTimeString('id-ID', { timeZone: 'Asia/Jakarta' })}</span>
         <span className="live-s">
-          data ditarik otomatis dari Shopee tiap beberapa menit · halaman ini menyegar sendiri
+          data ditarik otomatis dari Shopee &amp; TikTok tiap beberapa menit · halaman ini menyegar sendiri
         </span>
       </div>
 
@@ -99,7 +100,7 @@ export default async function Realtime() {
       </div>
 
       <div className="card" style={{ marginTop: 'var(--s4)' }}>
-        <div className="card-head"><h2>Produk terlaris hari ini</h2></div>
+        <div className="card-head"><h2>Produk terlaris hari ini (Shopee)</h2></div>
         <div className="table-wrap">
           <table>
             <thead><tr><th></th><th></th><th>Produk</th>

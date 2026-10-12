@@ -17,18 +17,42 @@ export function Pilihan({ pesanan, tahap, uang = true }) {
   // Kalau ada nama kurir instan lain yang belum tertangkap, ia sekadar
   // tidak muncul di tombol — tidak ada yang rusak.
   const instan = (o) => /instant|instan|sameday|same[ -]?day/i.test(o.carrier || '');
-  const terpilihInstan = pesanan.filter((o) => pilih.has(o.id) && instan(o));
+  // Cetak resi sebelum Pack hanya dibuktikan untuk kurir instan SHOPEE.
+  const terpilihInstan = pesanan.filter((o) => pilih.has(o.id) && instan(o) && o.platform !== 'tiktok');
   const jumlahInstan = terpilihInstan.length;
   const dilewatiInstan = pilih.size - jumlahInstan;
 
-  const semua = pilih.size > 0 && pilih.size === pesanan.length;
+  /**
+   * Pesanan TikTok kini bisa dicentang dan diproses: Atur kirim (setara
+   * Pack) dan Cetak resi. Satu tindakan hanya untuk SATU marketplace —
+   * jenis label dan cara aturnya berbeda — jadi pilihan campuran ditolak
+   * dengan saran menyalakan saklar Marketplace. Tindakan lain (sisihkan,
+   * tandai dikemas, cetak instan) masih khusus Shopee.
+   */
+  const bisaDipilih = () => true;
+  const dapatDipilih = pesanan;
+  const terpilih = pesanan.filter((o) => pilih.has(o.id));
+  const platPilih = new Set(terpilih.map((o) => (o.platform === 'tiktok' ? 'tiktok' : 'shopee')));
+  const semuaTiktok = terpilih.length > 0 && platPilih.size === 1 && platPilih.has('tiktok');
+  const campur = platPilih.size > 1;
+  const PESAN_CAMPUR = 'Pilihan berisi pesanan Shopee DAN TikTok. Resi dan cara aturnya berbeda — '
+    + 'nyalakan saklar Marketplace (Shopee atau TikTok) di atas, lalu pilih lagi.';
+  function hanyaShopee() {
+    if (terpilih.some((o) => o.platform === 'tiktok')) {
+      setErr('Tindakan ini baru tersedia untuk pesanan Shopee. Keluarkan pesanan TikTok dari pilihan.');
+      return false;
+    }
+    return true;
+  }
+  const [ttDialog, setTtDialog] = useState(null);   // pratinjau atur kirim TikTok
+  const semua = pilih.size > 0 && pilih.size === dapatDipilih.length;
   function toggle(id) {
     const n = new Set(pilih);
     n.has(id) ? n.delete(id) : n.add(id);
     setPilih(n);
   }
   function toggleSemua() {
-    setPilih(semua ? new Set() : new Set(pesanan.map((o) => o.id)));
+    setPilih(semua ? new Set() : new Set(dapatDipilih.map((o) => o.id)));
   }
 
   /**
@@ -36,6 +60,8 @@ export function Pilihan({ pesanan, tahap, uang = true }) {
    * baca parameter dari Shopee, tampilkan layar pilihan, baru jalankan.
    */
   async function bukaPack() {
+    if (campur) { setErr(PESAN_CAMPUR); return; }
+    if (semuaTiktok) { await bukaAturTiktok(); return; }
     setSibuk(true); setErr(''); setPackHasil(null);
     try {
       const j = await fetch('/api/pack', {
@@ -90,6 +116,50 @@ export function Pilihan({ pesanan, tahap, uang = true }) {
   }
 
   /**
+   * Atur kirim TikTok. Dua langkah seperti Pack: pratinjau membaca status
+   * terbaru dan pilihan serah terima dari TikTok, baru setelah dipilih dan
+   * dikonfirmasi Ship Package ditembak. Tidak bisa dibatalkan.
+   */
+  async function bukaAturTiktok() {
+    setSibuk(true); setErr(''); setPackHasil(null);
+    try {
+      const ids = pesanan.filter((o) => pilih.has(o.id)).map((o) => o.id);
+      const j = await fetch('/api/tiktok/kirim', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids, pratinjau: true }),
+      }).then((r) => r.json());
+      if (!j.ok) { setErr(j.error || 'Gagal membaca pilihan kirim TikTok'); return; }
+      const awal = {};
+      for (const p of j.pilihan || []) {
+        const metode = p.bisaJemput && p.slot?.length ? 'PICKUP' : p.bisaAntar ? 'DROP_OFF' : null;
+        awal[p.shop_id] = { metode, slot: p.slot?.[0] ? `${p.slot[0].mulai}-${p.slot[0].selesai}` : '' };
+      }
+      setTtDialog({ ...j, ids, pil: awal, ketik: '', kode: String(Math.floor(10 + Math.random() * 90)) });
+    } catch (e) { setErr(e.message); }
+    finally { setSibuk(false); }
+  }
+
+  async function jalankanAturTiktok() {
+    const d = ttDialog;
+    const pilihan = {};
+    for (const [shopId, v] of Object.entries(d.pil)) {
+      const [mulai, selesai] = String(v.slot || '').split('-');
+      pilihan[shopId] = { metode: v.metode, mulai: Number(mulai) || null, selesai: Number(selesai) || null };
+    }
+    setSibuk(true); setErr('');
+    try {
+      const j = await fetch('/api/tiktok/kirim', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: d.siap.map((s) => `-${s.order_sn}`), pilihan }),
+      }).then((r) => r.json());
+      if (!j.ok) { setErr(j.error || 'Gagal'); return; }
+      setTtDialog(null); setPilih(new Set());
+      setPackHasil({ selesai: j.selesai.length, gagalRinci: j.gagal, marketplace: 'TikTok' });
+    } catch (e) { setErr(e.message); }
+    finally { setSibuk(false); }
+  }
+
+  /**
    * Sisihkan atau kembalikan pesanan.
    *
    * Tidak menyentuh Shopee sama sekali — hanya penanda di sisi kita supaya
@@ -99,6 +169,7 @@ export function Pilihan({ pesanan, tahap, uang = true }) {
   async function sisihkan(ids, kembalikan = false) {
     const daftar = Array.isArray(ids) ? ids : [...pilih];
     if (!daftar.length) { setErr('Tidak ada pesanan dipilih'); return; }
+    if (!Array.isArray(ids) && !hanyaShopee()) return;
     let alasan = null;
     if (!kembalikan) {
       alasan = window.prompt(
@@ -162,6 +233,9 @@ export function Pilihan({ pesanan, tahap, uang = true }) {
       ? idsKhusus
       : pesanan.filter((o) => pilih.has(o.id)).map((o) => o.id);
     if (!ids.length) { setErr('Tidak ada pesanan dipilih'); return; }
+    // Satu PDF = satu jenis resi. Shopee dan TikTok dicetak terpisah.
+    const tt = ids.filter((x) => String(x).startsWith('-')).length;
+    if (tt > 0 && tt < ids.length) { setErr(PESAN_CAMPUR); return; }
 
     /**
      * Gerbang resi kembar.
@@ -204,7 +278,7 @@ export function Pilihan({ pesanan, tahap, uang = true }) {
     tulisLayarTunggu(jendela, ids.length);
     setSibuk(true); setErr(''); setPdf(null);
     try {
-      const r = await fetch('/api/label', {
+      const r = await fetch(ids.every((x) => String(x).startsWith('-')) ? '/api/tiktok/label' : '/api/label', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ ids }),
       });
@@ -243,6 +317,7 @@ export function Pilihan({ pesanan, tahap, uang = true }) {
   }
 
   async function jalan(aksi) {
+    if (!hanyaShopee()) return;
     setSibuk(true); setErr('');
     try {
       const r = await fetch('/api/pesanan', {
@@ -260,7 +335,9 @@ export function Pilihan({ pesanan, tahap, uang = true }) {
         <input type="checkbox" checked={semua} onChange={toggleSemua}
                aria-label="Pilih semua pesanan di halaman ini" />
         <span className="t">
-          {pilih.size ? `${pilih.size} pesanan dipilih` : `Pilih pesanan untuk ditandai (${pesanan.length} di halaman ini)`}
+          {pilih.size
+            ? `${pilih.size} pesanan dipilih` + (campur ? ' — campuran Shopee & TikTok' : semuaTiktok ? ' (TikTok)' : '')
+            : `Pilih pesanan untuk ditandai (${dapatDipilih.length} di halaman ini)`}
         </span>
         <div className="spacer" />
         {tahap === 'sisih' && (
@@ -292,7 +369,7 @@ export function Pilihan({ pesanan, tahap, uang = true }) {
           <button className="btn btn-sm btn-primary" disabled={!pilih.size || sibuk}
                   onClick={bukaPack}
                   title="Atur pengiriman ke Shopee dan terbitkan nomor resi">
-            {sibuk ? 'Memproses…' : (tahap === 'baru' ? 'Pack' : 'Coba Pack lagi')}
+            {sibuk ? 'Memproses…' : semuaTiktok ? 'Atur kirim TikTok' : (tahap === 'baru' ? 'Pack' : 'Coba Pack lagi')}
           </button>
         ) : (
           <button className="btn btn-sm" disabled={!pilih.size || sibuk} onClick={() => cetakResi()}
@@ -447,6 +524,96 @@ export function Pilihan({ pesanan, tahap, uang = true }) {
         );
       })()}
 
+      {ttDialog && (() => {
+        const d = ttDialog;
+        const lebih = d.siap.length > d.batas;
+        const lengkap = Object.entries(d.pil).every(([, v]) => v.metode && (v.metode !== 'PICKUP' || v.slot));
+        const kodeCocok = d.ketik.trim() === d.kode;
+        const jam = (t) => new Date(t * 1000).toLocaleString('id-ID', { timeZone: 'Asia/Jakarta',
+          weekday: 'short', day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' });
+        const ubah = (shop, k, v) => setTtDialog((x) => ({ ...x, pil: { ...x.pil, [shop]: { ...x.pil[shop], [k]: v } } }));
+        return (
+          <div style={{ position: 'fixed', inset: 0, zIndex: 90, display: 'flex', alignItems: 'center',
+                        justifyContent: 'center', padding: 20, background: 'rgba(11,18,38,.62)' }}
+               role="alertdialog" aria-modal="true">
+            <div className="card" style={{ width: 'min(620px,100%)', maxHeight: '86vh', display: 'flex', flexDirection: 'column' }}>
+              <div className="card-head"><h2>Atur kirim TikTok</h2></div>
+              <div className="card-body" style={{ overflow: 'auto' }}>
+                <div className="note" style={{ background: 'var(--warn-tint)', borderColor: 'var(--warn)', marginTop: 0 }}>
+                  <div>
+                    <b>{d.siap.length} pesanan</b> siap diatur kirim. Tindakan ini <b>tidak bisa dibatalkan</b> —
+                    setelahnya TikTok menerbitkan resi dan menunggu serah terima.
+                    {!d.terbukti && <> <br /><b>Pemakaian pertama:</b> hanya SATU pesanan yang boleh diproses,
+                      supaya kalau ada yang salah dampaknya satu paket saja. Setelah berhasil, batasnya naik
+                      jadi 50.</>}
+                  </div>
+                </div>
+                {lebih && <p className="err">Terlalu banyak: maksimal {d.batas} pesanan sekali jalan. Kurangi pilihan.</p>}
+                {d.pilihan.map((p) => (
+                  <div key={p.shop_id} style={{ marginTop: 12 }}>
+                    <div style={{ fontWeight: 600, marginBottom: 6 }}>{p.toko || p.shop_id}</div>
+                    {p.galat && <p className="err">Pilihan serah terima gagal dibaca: {p.galat}</p>}
+                    <div className="form-row" style={{ gap: 12, flexWrap: 'wrap' }}>
+                      <label style={{ opacity: p.bisaJemput ? 1 : 0.5 }}>
+                        <input type="radio" disabled={!p.bisaJemput} checked={d.pil[p.shop_id]?.metode === 'PICKUP'}
+                               onChange={() => ubah(p.shop_id, 'metode', 'PICKUP')} /> Dijemput kurir
+                      </label>
+                      <label style={{ opacity: p.bisaAntar ? 1 : 0.5 }}>
+                        <input type="radio" disabled={!p.bisaAntar} checked={d.pil[p.shop_id]?.metode === 'DROP_OFF'}
+                               onChange={() => ubah(p.shop_id, 'metode', 'DROP_OFF')} /> Antar sendiri ke titik antar
+                      </label>
+                    </div>
+                    {d.pil[p.shop_id]?.metode === 'PICKUP' && (
+                      <select value={d.pil[p.shop_id]?.slot || ''} style={{ marginTop: 6, height: 30 }}
+                              onChange={(e) => ubah(p.shop_id, 'slot', e.target.value)}>
+                        {!p.slot.length && <option value="">TikTok tidak menawarkan jadwal jemput</option>}
+                        {p.slot.map((x) => (
+                          <option key={x.mulai} value={`${x.mulai}-${x.selesai}`}>{jam(x.mulai)} – {jam(x.selesai)}</option>
+                        ))}
+                      </select>
+                    )}
+                    {d.pil[p.shop_id]?.metode === 'DROP_OFF' && p.titikAntar && (
+                      <div className="st" style={{ marginTop: 6 }}>
+                        <a href={p.titikAntar} target="_blank" rel="noreferrer">Lihat titik antar terdekat</a>
+                      </div>
+                    )}
+                  </div>
+                ))}
+                {d.dilewati.length > 0 && (
+                  <div style={{ marginTop: 14 }}>
+                    <div className="st" style={{ marginBottom: 4 }}>{d.dilewati.length} pesanan dilewati:</div>
+                    {d.dilewati.map((g) => (
+                      <div key={g.order_sn} style={{ fontSize: 12.5, padding: '3px 0' }}>
+                        <span className="mono">{g.order_sn}</span> <span className="t-mute">— {g.alasan}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+                {d.siap.length > 0 && (
+                  <div style={{ marginTop: 14 }}>
+                    <div style={{ fontWeight: 600, marginBottom: 6 }}>
+                      Ketik kode <span className="mono" style={{ fontSize: 16, color: 'var(--neg)' }}>{d.kode}</span> untuk melanjutkan
+                    </div>
+                    <input value={d.ketik} inputMode="numeric" autoComplete="off" placeholder={`Ketik ${d.kode}`}
+                           onChange={(e) => setTtDialog((x) => ({ ...x, ketik: e.target.value }))}
+                           style={{ width: 160, height: 32 }} />
+                  </div>
+                )}
+              </div>
+              <div style={{ display: 'flex', gap: 8, padding: 'var(--s4)', borderTop: '1px solid var(--line)' }}>
+                <div style={{ flex: 1 }} />
+                <button className="btn btn-sm" disabled={sibuk} onClick={() => setTtDialog(null)}>Batal</button>
+                <button className="btn btn-sm btn-primary"
+                        disabled={sibuk || !d.siap.length || lebih || !lengkap || !kodeCocok}
+                        onClick={() => jalankanAturTiktok()}>
+                  {sibuk ? 'Memproses…' : `Atur kirim ${d.siap.length} pesanan`}
+                </button>
+              </div>
+            </div>
+          </div>
+        );
+      })()}
+
       {dialog && (
         <PackDialog grup={dialog.grup} dilewati={dialog.dilewati} sibuk={sibuk}
                     onBatal={() => setDialog(null)} onJalan={jalankanPack} />
@@ -477,7 +644,12 @@ export function Pilihan({ pesanan, tahap, uang = true }) {
             borderColor: adaGagal ? 'var(--neg)' : 'var(--pos)', alignItems: 'flex-start' }}>
             <div style={{ flex: 1, minWidth: 0 }}>
               {packHasil.selesai !== null && packHasil.selesai !== undefined ? (
-                <b>{packHasil.selesai} pesanan berhasil di-Pack{adaGagal ? `, ${rinci.length} gagal.` : '.'}</b>
+                <>
+                <b>{packHasil.selesai} pesanan berhasil {packHasil.marketplace === 'TikTok'
+                  ? 'diatur kirim di TikTok' : 'di-Pack'}{adaGagal ? `, ${rinci.length} gagal.` : '.'}</b>
+                {packHasil.marketplace === 'TikTok' && packHasil.selesai > 0 &&
+                  <> Pesanannya pindah ke <b>Sedang dikemas</b> — cetak resinya dari sana.</>}
+                </>
               ) : (
                 <b>{packHasil.diantrikan} pesanan masuk antrean Pack.</b>
               )}
@@ -491,8 +663,8 @@ export function Pilihan({ pesanan, tahap, uang = true }) {
               {adaGagal && (
                 <div style={{ marginTop: 8, maxHeight: 240, overflow: 'auto' }}>
                   <div className="st" style={{ marginBottom: 4 }}>
-                    Pesanan berikut <b>belum diatur pengirimannya di Shopee</b> dan resinya belum
-                    terbit. Semuanya masih ada di daftar dan bisa dipilih ulang untuk dicoba lagi.
+                    Pesanan berikut <b>belum diatur pengirimannya di {packHasil.marketplace || 'Shopee'}</b> dan
+                    resinya belum terbit. Semuanya masih ada di daftar dan bisa dipilih ulang untuk dicoba lagi.
                   </div>
                   {rinci.map((g) => (
                     <div key={g.order_sn} style={{ padding: '6px 0', borderTop: '1px solid var(--line)' }}>
@@ -535,9 +707,10 @@ export function Pilihan({ pesanan, tahap, uang = true }) {
       <div style={{ display: 'none' }} id="pilih-state">{[...pilih].join(',')}</div>
 
       {pesanan.map((o) => (
-        <Baris key={o.id} o={o} uang={uang} dipilih={pilih.has(o.id)} onToggle={() => toggle(o.id)}
+        <Baris key={`${o.platform || 'shopee'}-${o.order_sn}`} o={o} uang={uang}
+               dipilih={pilih.has(o.id)} onToggle={() => toggle(o.id)}
                tahap={tahap} sibuk={sibuk}
-               onSisih={() => sisihkan([o.id], tahap === 'sisih')} />
+               onSisih={bisaDipilih(o) ? () => sisihkan([o.id], tahap === 'sisih') : null} />
       ))}
     </>
   );
@@ -597,6 +770,12 @@ function Baris({ o, uang = true, dipilih, onToggle, tahap, sibuk, onSisih }) {
       <div className="order-head">
         <input type="checkbox" checked={dipilih} onChange={onToggle}
                aria-label={`Pilih pesanan ${o.order_sn}`} />
+        <span className={'badge ' + (o.platform === 'tiktok' ? '' : 'b-warn')}
+              style={o.platform === 'tiktok'
+                ? { fontWeight: 600, background: 'var(--ink)', color: 'var(--surface)' }
+                : { fontWeight: 600 }}>
+          {o.platform === 'tiktok' ? 'TikTok' : 'Shopee'}
+        </span>
         <span className="sn mono">{o.order_sn}</span><span>·</span>
         <span>{o.shop_name || `Toko ${o.shop_id}`}</span><span>·</span>
         <span>{jam(o.created_time)}</span>
@@ -620,7 +799,7 @@ function Baris({ o, uang = true, dipilih, onToggle, tahap, sibuk, onSisih }) {
             {o.pack_gagal_jenis === 'marketplace' ? 'Shopee belum siap' : 'Pack ditolak'}
           </span>
         )}
-        <span className="badge b-mute">{o.status}</span>
+        <span className="badge b-mute">{o.status_asli || o.status}</span>
         {/* Tombol per baris, seperti BigSeller: menyisihkan satu pesanan
             tidak perlu mencentangnya dulu. */}
         {onSisih && ['baru', 'gagalpack', 'verifikasi', 'sisih'].includes(tahap) && (

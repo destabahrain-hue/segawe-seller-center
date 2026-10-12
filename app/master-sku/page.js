@@ -5,6 +5,8 @@ import PilihMassal from './PilihMassal';
 import Paginasi, { PER_HALAMAN, bacaPer } from '../Paginasi';
 import { peranSekarang, bolehUang } from '@/lib/auth';
 import { ensureSchema, q } from '@/lib/db';
+import { daftarSkuTiktok } from '@/lib/tiktok-laporan';
+import { Taut as TautTiktok } from '../tiktok/sku/Taut';
 import { rp, num, tgl } from '@/lib/fmt';
 
 export const dynamic = 'force-dynamic';
@@ -33,7 +35,7 @@ export default async function MasterSku({ searchParams }) {
   }
   const where = w.join(' AND ');
 
-  const [master, jumlah, hitungJenis, ringkasSemua, komponen, belum, sudah, tokoAktif] = await Promise.all([
+  const [master, jumlah, hitungJenis, ringkasSemua, komponen, belum, sudah, tokoAktif, skuTiktok] = await Promise.all([
     q(`SELECT ms.*, img.url AS gambar,
               (SELECT h.hpp FROM master_sku_hpp h WHERE h.master_sku_id = ms.id
                 ORDER BY h.effective_from DESC LIMIT 1) AS hpp,
@@ -98,6 +100,7 @@ export default async function MasterSku({ searchParams }) {
        ORDER BY s.shop_name NULLS LAST, m.shop_sku LIMIT 300`),
     q(`SELECT shop_id, shop_name FROM shops WHERE status = 'active'
        ORDER BY shop_name NULLS LAST, shop_id`),
+    daftarSkuTiktok({}).catch(() => []),
   ]);
 
   // ── Usulan pencocokan ──
@@ -301,7 +304,8 @@ export default async function MasterSku({ searchParams }) {
                       <td className="t-right">
                         {m.kind === 'paket'
                           ? <span className="hpp-auto num">{rp(hppPaket)}</span>
-                          : <HppInput id={m.id} awal={m.hpp ? Math.round(m.hpp) : ''} />}
+                          : <HppInput id={m.id} awal={m.hpp ? Math.round(m.hpp) : ''}
+                                       tanggalAwal={m.berlaku ? String(m.berlaku) : null} />}
                       </td>
                       <td className="t-mute">{m.kind === 'paket' ? 'dihitung otomatis' : tgl(m.berlaku)}</td>
                     </>}
@@ -341,7 +345,7 @@ export default async function MasterSku({ searchParams }) {
 
       <div className="card" style={{ marginBottom: 'var(--s4)' }}>
         <div className="card-head"><h2>SKU toko belum tertaut</h2>
-          <span className="badge b-mute">{belum.length} SKU</span>
+          <span className="badge b-mute">{belum.length + skuTiktok.filter((x) => !x.master_sku_id).length} SKU</span>
           <div className="spacer" />
           <span className="t-mute" style={{ fontSize: 12 }}>
             Daripada satu per satu, pakai <b>Petakan otomatis</b> di atas.
@@ -366,7 +370,19 @@ export default async function MasterSku({ searchParams }) {
                   </tr>
                 );
               })}
-              {!belum.length && <tr><td colSpan={4} className="t-mute">Semua SKU sudah tertaut. Bagus.</td></tr>}
+              {skuTiktok.filter((x) => !x.master_sku_id).map((x) => (
+                <tr key={'tt-' + x.shop_id + x.seller_sku}>
+                  <td className="t-strong">{x.produk ? x.produk.slice(0, 28) : 'TikTok'}
+                    <span className="t-mute" style={{ fontWeight: 400 }}> (TikTok Shop)</span></td>
+                  <td className="mono">{x.seller_sku}</td>
+                  <td className="t-mute" style={{ fontSize: 12 }}>
+                    {num(x.terjual)} terjual · {rp(x.omzet)}</td>
+                  <td><TautTiktok shopId={x.shop_id} sellerSku={x.seller_sku}
+                                  terpilih={x.master_sku_id} pilihan={ringkasSemua} /></td>
+                </tr>
+              ))}
+              {!belum.length && !skuTiktok.some((x) => !x.master_sku_id) &&
+                <tr><td colSpan={4} className="t-mute">Semua SKU sudah tertaut. Bagus.</td></tr>}
             </tbody>
           </table>
         </div>
@@ -374,7 +390,7 @@ export default async function MasterSku({ searchParams }) {
 
       <div className="card">
         <div className="card-head"><h2>SKU toko yang sudah tertaut</h2>
-          <div className="spacer" /><span className="badge b-mute">{sudah.length} tautan</span></div>
+          <div className="spacer" /><span className="badge b-mute">{sudah.length + skuTiktok.filter((x) => x.master_sku_id).length} tautan</span></div>
         <div className="table-wrap">
           <table>
             <thead><tr>
@@ -391,7 +407,21 @@ export default async function MasterSku({ searchParams }) {
                   <td><LepasTaut shopId={s.shop_id} shopSku={s.shop_sku} /></td>
                 </tr>
               ))}
-              {!sudah.length && <tr><td colSpan={5} className="t-mute">Belum ada SKU toko yang tertaut.</td></tr>}
+              {skuTiktok.filter((x) => x.master_sku_id).map((x) => (
+                <tr key={'ttok-' + x.shop_id + x.seller_sku}>
+                  <td className="t-strong">{x.produk ? x.produk.slice(0, 28) : 'TikTok'}
+                    <span className="t-mute" style={{ fontWeight: 400 }}> (TikTok Shop)</span></td>
+                  <td className="mono">{x.seller_sku}</td>
+                  <td><span className="t-strong">{x.master_code}</span>{' '}
+                    <span className="t-mute">{x.master_nama}</span></td>
+                  <td><span className={'badge ' + (x.auto_linked ? 'b-mute' : 'b-info')}>
+                    {x.auto_linked ? 'otomatis' : 'manual'}</span></td>
+                  <td><TautTiktok shopId={x.shop_id} sellerSku={x.seller_sku}
+                                  terpilih={x.master_sku_id} pilihan={ringkasSemua} /></td>
+                </tr>
+              ))}
+              {!sudah.length && !skuTiktok.some((x) => x.master_sku_id) &&
+                <tr><td colSpan={5} className="t-mute">Belum ada SKU toko yang tertaut.</td></tr>}
             </tbody>
           </table>
         </div>

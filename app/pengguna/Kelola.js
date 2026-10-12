@@ -181,6 +181,78 @@ export function UbahPeranAkun({ id, nilai, peran }) {
   );
 }
 
+/**
+ * Ubah satu akun: nama, nama pengguna, kata sandi (opsional), dan izin
+ * koreksi stok. Kata sandi dibiarkan kosong kalau tidak diganti.
+ */
+export function EditAkun({ akun }) {
+  const [buka, setBuka] = useState(false);
+  const [f, setF] = useState({
+    nama: akun.nama || '', username: akun.username || '', sandi: '',
+    boleh_koreksi: !!akun.boleh_koreksi,
+  });
+  const [err, setErr] = useState('');
+  const [sibuk, setSibuk] = useState(false);
+
+  if (!buka) return <button className="btn btn-sm" onClick={() => setBuka(true)}>Ubah</button>;
+
+  return (
+    <div className="lapis" onClick={(e) => e.target === e.currentTarget && setBuka(false)}>
+      <div className="card lembar" style={{ width: 'min(440px, 100%)' }}>
+        <div className="card-head"><h2>Ubah akun</h2></div>
+        <div className="card-body" style={{ display: 'grid', gap: 'var(--s3)' }}>
+          <div className="field"><label>Nama</label>
+            <input value={f.nama} onChange={(e) => setF({ ...f, nama: e.target.value })} /></div>
+          <div className="field"><label>Nama pengguna</label>
+            <input value={f.username} onChange={(e) => setF({ ...f, username: e.target.value })} /></div>
+          <div className="field"><label>Kata sandi baru <span className="t-mute">(kosongkan kalau tidak diganti)</span></label>
+            <div style={{ display: 'flex', gap: 6 }}>
+              <input value={f.sandi} onChange={(e) => setF({ ...f, sandi: e.target.value })}
+                     placeholder="minimal 8 karakter" style={{ flex: 1 }} />
+              <button className="btn btn-sm" onClick={() => setF({ ...f, sandi: acakSandi() })}>Acak</button>
+            </div></div>
+          <label style={{ display: 'flex', gap: 8, alignItems: 'flex-start', fontSize: 13 }}>
+            <input type="checkbox" checked={f.boleh_koreksi} style={{ marginTop: 3 }}
+                   onChange={(e) => setF({ ...f, boleh_koreksi: e.target.checked })} />
+            <span><b>Izinkan koreksi stok</b>
+              <span className="t-mute" style={{ display: 'block', fontSize: 12 }}>
+                Boleh memakai Koreksi (+/−), membatalkan catatan gudang, dan menerapkan hasil stock opname.
+              </span></span>
+          </label>
+          {f.sandi && <p className="ok" style={{ margin: 0 }}>Catat kata sandinya sekarang — setelah disimpan tidak bisa dilihat lagi.</p>}
+          {err && <p className="err" style={{ margin: 0 }}>{err}</p>}
+          <div style={{ display: 'flex', gap: 8, justifyContent: 'flex-end' }}>
+            <button className="btn" onClick={() => setBuka(false)} disabled={sibuk}>Batal</button>
+            <button className="btn btn-primary" disabled={sibuk || !f.nama || !f.username} onClick={async () => {
+              setSibuk(true); setErr('');
+              const j = await kirim({ aksi: 'ubah', id: akun.id, ...f });
+              if (j.ok) location.reload(); else { setErr(j.error || 'Gagal'); setSibuk(false); }
+            }}>Simpan</button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export function SaklarKoreksi({ id, nilai }) {
+  const [v, setV] = useState(!!nilai);
+  const [sibuk, setSibuk] = useState(false);
+  return (
+    <label style={{ display: 'inline-flex', gap: 6, alignItems: 'center', fontSize: 12 }}
+           title="Boleh koreksi stok, batalkan catatan gudang, dan terapkan opname">
+      <input type="checkbox" checked={v} disabled={sibuk} onChange={async (e) => {
+        const baru = e.target.checked;
+        setV(baru); setSibuk(true);
+        const j = await kirim({ aksi: 'koreksi', id, boleh_koreksi: baru });
+        if (!j.ok) { setV(!baru); alert(j.error || 'Gagal'); }
+        setSibuk(false);
+      }} />
+      <span className="t-mute">{v ? 'Boleh' : 'Tidak'}</span>
+    </label>
+  );
+}
+
 export function AksiPengguna({ id, aktif }) {
   const [sibuk, setSibuk] = useState(false);
   const jalan = async (body) => { setSibuk(true); await kirim(body); location.reload(); };

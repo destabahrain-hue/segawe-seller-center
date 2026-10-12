@@ -5,7 +5,7 @@ import { Pilihan } from './Aksi';
 import { peranSekarang, bolehUang } from '@/lib/auth';
 import { ensureSchema, q } from '@/lib/db';
 import { STATUS, BASIS_WAKTU, URUT, cariStatus, kunciStatus, cariBasis, waktuDari, hitungStatus, daftar,
-         hitungKurir, hitungBaris, PER_HALAMAN } from '@/lib/orders';
+         hitungKurir, hitungBaris, PER_HALAMAN, MARKETPLACE, kunciMp } from '@/lib/orders';
 import RangePicker from '../RangePicker';
 import GagalPack from './GagalPack';
 import { TEMPLATE_BAWAAN } from '@/lib/kolom-ekspor';
@@ -38,6 +38,17 @@ export default async function Pesanan({ searchParams }) {
   const status = kunci.length > 1 ? kunci : kunci[0];
   const statusParam = kunci.join(',');
   const toko = searchParams?.toko || null;
+  /**
+   * Saklar marketplace. Yang dinyalakan disimpan apa adanya supaya tombolnya
+   * tampil menyala; untuk menyaring, dua-duanya menyala sama dengan tidak
+   * ada yang menyala = semua marketplace (lihat kunciMp).
+   */
+  const mpNyala = [...new Set(String(searchParams?.mp || '').split(',')
+    .map((x) => x.trim().toLowerCase())
+    .filter((x) => MARKETPLACE.some(([k]) => k === x)))];
+  const mpParam = mpNyala.length ? mpNyala.join(',') : null;
+  const mp = kunciMp(mpParam);        // [] = semua
+  const mpSaring = mp.length ? mp[0] : null;
   const kadaluarsa = searchParams?.kadaluarsa || null;
   const kurir = searchParams?.kurir || null;
   const cari = searchParams?.cari || null;
@@ -58,11 +69,18 @@ export default async function Pesanan({ searchParams }) {
   try {
     await ensureSchema();
     [hitung, rows, daftarToko, kurirList, total] = await Promise.all([
-      hitungStatus({ shopId: toko, waktu }),
-      daftar({ status, shopId: toko, kadaluarsa, kurir, cari, waktu, cetak, urut, arah, halaman, perHalaman }),
-      q('SELECT shop_id, shop_name FROM shops ORDER BY shop_name NULLS LAST'),
-      hitungKurir({ status, shopId: toko, kadaluarsa, cari, waktu, cetak }),
-      hitungBaris({ status, shopId: toko, kadaluarsa, kurir, cari, waktu, cetak }),
+      hitungStatus({ shopId: toko, waktu, mp: mpSaring }),
+      daftar({ status, shopId: toko, kadaluarsa, kurir, cari, waktu, cetak, urut, arah, halaman,
+               perHalaman, mp: mpSaring }),
+      // Toko dari dua marketplace, mengikuti saklar yang menyala.
+      q(`SELECT * FROM (
+           SELECT shop_id::text AS shop_id, shop_name, 'shopee' AS platform FROM shops
+           UNION ALL
+           SELECT shop_id, shop_name, 'tiktok' FROM tiktok_shops) t
+         WHERE ($1::text IS NULL OR platform = $1)
+         ORDER BY platform, shop_name NULLS LAST`, [mpSaring]),
+      hitungKurir({ status, shopId: toko, kadaluarsa, cari, waktu, cetak, mp: mpSaring }),
+      hitungBaris({ status, shopId: toko, kadaluarsa, kurir, cari, waktu, cetak, mp: mpSaring }),
     ]);
   } catch (e) {
     galat = { pesan: e.message, detail: [e.code && `kode: ${e.code}`, e.detail, e.hint,
@@ -71,7 +89,7 @@ export default async function Pesanan({ searchParams }) {
 
   const qs = (ubah) => {
     const p = new URLSearchParams();
-    const v = { s: statusParam, toko, kadaluarsa, kurir, cari, cetak, tpl,
+    const v = { s: statusParam, mp: mpParam, toko, kadaluarsa, kurir, cari, cetak, tpl,
                 urut: urut === 'batas' ? null : urut, arah: arah === 'turun' ? null : arah,
                 w: basis === 'dibuat' ? null : basis,
                 r: kodeRentang === 'semua' ? null : kodeRentang, dari, sampai,
@@ -89,6 +107,7 @@ export default async function Pesanan({ searchParams }) {
     if (urut !== 'batas') p.set('urut', urut);
     if (arah !== 'turun') p.set('arah', arah);
     if (toko) p.set('toko', toko);
+    if (mpSaring) p.set('mp', mpSaring);
     if (kadaluarsa) p.set('kadaluarsa', kadaluarsa);
     if (kurir) p.set('kurir', kurir);
     if (cari) p.set('cari', cari);
@@ -131,6 +150,26 @@ export default async function Pesanan({ searchParams }) {
       <GagalPack />
 
       <div className="filter-bar">
+        <div className="filter-row">
+          <div className="filter-key">Marketplace</div>
+          <div className="filter-vals">
+            {MARKETPLACE.map(([k, label]) => {
+              const nyala = mpNyala.includes(k);
+              const baru = nyala ? mpNyala.filter((x) => x !== k) : [...mpNyala, k];
+              return (
+                <a key={k} className="chip" aria-pressed={nyala}
+                   href={qs({ mp: baru.length ? baru.join(',') : null, toko: null, kurir: null, hal: null })}
+                   title={nyala ? `Matikan saringan ${label}` : `Tampilkan pesanan ${label} saja`}>
+                  {label}
+                </a>
+              );
+            })}
+            <span className="t-mute" style={{ fontSize: 12, alignSelf: 'center' }}>
+              {mp.length ? `hanya ${mp[0] === 'tiktok' ? 'TikTok' : 'Shopee'}` : 'semua marketplace'}
+            </span>
+          </div>
+        </div>
+
         <div className="filter-row">
           <div className="filter-key">Dasar waktu</div>
           <div className="filter-vals">
@@ -249,9 +288,11 @@ export default async function Pesanan({ searchParams }) {
             <div className="filter-vals">
               <a className="chip" href={qs({ toko: null })} aria-pressed={!toko}>Semua toko</a>
               {daftarToko.map((t) => (
-                <a key={t.shop_id} className="chip" href={qs({ toko: String(t.shop_id) })}
+                <a key={`${t.platform}-${t.shop_id}`} className="chip" href={qs({ toko: String(t.shop_id) })}
                    aria-pressed={String(toko) === String(t.shop_id)}>
                   {t.shop_name || `Toko ${t.shop_id}`}
+                  {t.platform === 'tiktok' && !mpSaring &&
+                    <span className="t-mute" style={{ fontWeight: 400 }}> (TikTok)</span>}
                 </a>
               ))}
             </div>
@@ -314,14 +355,23 @@ export default async function Pesanan({ searchParams }) {
           <Paginasi halaman={halaman} perHalaman={perHalaman} total={total} qs={qs}
                     aksi="/pesanan" cari={cari}
                     cariPlaceholder="Cari no. pesanan, no. resi, SKU, atau nama barang"
-                    saring={{ s: status, toko, kadaluarsa, kurir,
+                    saring={{ s: status, mp: mpParam, toko, kadaluarsa, kurir,
                               per: perHalaman === 50 ? null : perHalaman }} />
+          {rows.some((o) => o.platform === 'tiktok') && kunci.some((k) => ['baru', 'proses'].includes(k)) && (
+            <Catatan>
+              <b>Pesanan TikTok diproses dari sini juga.</b> Di <b>Pesanan baru</b>, centang lalu tekan
+              <b> Atur kirim TikTok</b> (setara Pack); pesanannya pindah ke <b>Sedang dikemas</b>, dan resinya
+              dicetak dari sana. Satu tindakan hanya untuk satu marketplace — nyalakan saklar <b>TikTok</b>
+              atau <b>Shopee</b> di atas supaya tumpukan resinya tidak tercampur. Scan &amp; Kirim, Sisihkan,
+              dan Tandai dikemas masih khusus Shopee.
+            </Catatan>
+          )}
           {rows.length
             ? <Pilihan pesanan={JSON.parse(JSON.stringify(rows))} tahap={kunci.length > 1 ? 'campuran' : kunci[0]} uang={uang} />
             : <Kosong judul={cari ? `Tidak ada yang cocok dengan "${cari}"` : `Tidak ada pesanan di "${s.label}"`}
                       anak={cari
                         ? 'Coba kata kunci lain, atau hapus pencariannya.'
-                        : 'Tekan Sinkron di kanan atas untuk menarik pesanan terbaru dari Shopee.'} />}
+                        : 'Tekan Sinkron di kanan atas untuk menarik pesanan terbaru.'} />}
           {rows.length > 0 && <Paginasi halaman={halaman} perHalaman={perHalaman} total={total}
                                         qs={qs} aksi="/pesanan" bawah />}
         </div>

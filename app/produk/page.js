@@ -2,7 +2,6 @@ import Shell from '../Shell';
 import AutoSegar from '../AutoSegar';
 import Paginasi, { bacaPer } from '../Paginasi';
 import { Kosong, Catatan, Galat } from '../UI';
-import Tarik from './Tarik';
 import { peranSekarang, bolehUang } from '@/lib/auth';
 import { ensureSchema, q, one } from '@/lib/db';
 import { TAB, cariTab, hitungTab, daftarProduk, hitungBarisProduk } from '@/lib/katalog';
@@ -52,13 +51,13 @@ export default async function Produk({ searchParams }) {
       {!galat && <>
       {total === 0 ? (
         <Catatan>
-          Katalog belum pernah ditarik. Tekan <b>Tarik produk dari Shopee</b> di kanan.
+          Katalog belum pernah ditarik. Tarik produk lewat <b>Toko Terhubung</b>.
           Katalog ini jadi sumber Master SKU sekaligus dasar halaman Salin Listing.
         </Catatan>
       ) : belumLengkap > 0 && (
         <Catatan>
           <b>{num(belumLengkap)} produk belum lengkap variannya.</b> Shopee membatasi pengambilan
-          varian satu produk per panggilan, jadi ditarik bertahap. Tekan <b>Tarik produk</b> lagi
+          varian satu produk per panggilan, jadi ditarik bertahap. Tarik lagi dari <b>Toko Terhubung</b>
           sampai angka ini nol.
         </Catatan>
       )}
@@ -102,7 +101,7 @@ export default async function Produk({ searchParams }) {
           <span className="t-mute" style={{ fontSize: 12 }}>
             {ringkas?.terakhir ? `Tarik terakhir ${jam(ringkas.terakhir)}` : 'Belum pernah ditarik'}
           </span>
-          <Tarik />
+          <a className="btn btn-sm" href="/toko">Tarik produk di Toko Terhubung</a>
         </div>
         <div className="card-body" style={{ paddingBottom: 0 }}>
           <Paginasi halaman={halaman} perHalaman={perHalaman} total={jumlahBaris} qs={qs}

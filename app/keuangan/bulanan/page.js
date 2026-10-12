@@ -64,6 +64,27 @@ export default async function LaporanBulanan({ searchParams }) {
         </Catatan>
       )}
 
+      {L.adaTiktok && (
+        <Catatan>
+          <b>TikTok sudah masuk otomatis</b> dari transaksi statement TikTok (tanggal uang cair),
+          dengan cara hitung yang sama dengan Shopee.
+          {L.manualDiabaikan?.length > 0 && <> Baris manual <b>{L.manualDiabaikan.join(', ')}</b> di
+            Beban Operasional <b>diabaikan</b> untuk bulan ini supaya TikTok tidak terhitung dua kali.</>}
+          {L.toko.filter((x) => x.platform === 'TikTok Shop').map((x) => (
+            <span key={x.shopId}> Iklan <b>{x.nama}</b>:{' '}
+              {x.sumberIklan === 'manual'
+                ? <>dari belanja GMV Max yang diisi manual ({x.hariIklanManual} hari) —
+                    {' '}{rp(x.iklanManual)}, dari situ {rp(x.iklanStatement)} dipotong lewat statement.</>
+                : <>hanya dari potongan statement {rp(x.iklanStatement)}.
+                    {' '}<b>Belanja yang dibayar dari saldo iklan belum masuk</b> — isi belanja GMV Max
+                    harian di <a href="/tiktok">halaman TikTok Shop</a> supaya lengkap.</>}
+              {' '}Ditambah PPN 11% seperti laporan Excel.</span>
+          ))}
+          {' '}Rincian per jenis transaksi bisa dicocokkan di{' '}
+          <a href={`/api/tiktok/diagnosa-keuangan?dari=${L.dari}&sampai=${L.sampai}`}>diagnosa keuangan TikTok</a>.
+        </Catatan>
+      )}
+
       {t.barisTanpaHpp > 0 && (
         <Catatan>
           <b>{num(t.barisTanpaHpp)} baris pesanan tidak punya HPP.</b> Modalnya terbaca

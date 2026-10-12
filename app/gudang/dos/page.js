@@ -4,6 +4,8 @@ import { Kpi, Kosong } from '../../UI';
 import { ensureSchema } from '@/lib/db';
 import { hitungDOS, ringkasDOS, BAWAAN } from '@/lib/dos';
 import { num } from '@/lib/fmt';
+import AturSupplier from './AturSupplier';
+import { daftarSupplier } from '@/lib/gudang';
 
 export const dynamic = 'force-dynamic';
 
@@ -26,11 +28,13 @@ const LENCANA = {
 export default async function DOS({ searchParams }) {
   await ensureSchema();
   const saring = searchParams?.f || 'perlu';
+  const supPilih = searchParams?.sup || '';
 
-  const semua = await hitungDOS();
+  const [semua, daftarSup] = await Promise.all([hitungDOS(), daftarSupplier()]);
   const rd = ringkasDOS(semua);
 
   const baris = semua
+    .filter((d) => !supPilih || (supPilih === '-' ? !d.supplier : d.supplier === supPilih))
     .filter((d) => saring === 'semua'
       ? true
       : saring === 'perlu'
@@ -40,7 +44,13 @@ export default async function DOS({ searchParams }) {
     .sort((a, b) => (URUTAN[a.status] - URUTAN[b.status])
                  || ((a.dos ?? 1e9) - (b.dos ?? 1e9)));
 
-  const qs = (f) => `/gudang/dos?f=${f}`;
+  const qs = (f, sup = supPilih) => `/gudang/dos?f=${f}${sup ? `&sup=${encodeURIComponent(sup)}` : ''}`;
+  // Total saran pesan per supplier — isi daftar belanja, dihitung dari baris yang tampil.
+  const belanja = new Map();
+  for (const d of baris) if (d.saran > 0) {
+    const k = d.supplier || 'Tanpa supplier';
+    belanja.set(k, (belanja.get(k) || 0) + 1);
+  }
   const CHIP = [
     ['perlu',   'Perlu tindakan', rd.habis + rd.pesan + rd.waspada],
     ['pesan',   'Saatnya pesan',  rd.pesan],
@@ -76,6 +86,16 @@ export default async function DOS({ searchParams }) {
             ))}
           </div>
         </div>
+        <div className="filter-row">
+          <div className="filter-key">Supplier</div>
+          <div className="filter-vals">
+            <a className="chip" href={qs(saring, '')} aria-pressed={!supPilih}>Semua</a>
+            {daftarSup.map((s) => (
+              <a key={s} className="chip" href={qs(saring, s)} aria-pressed={supPilih === s}>{s}</a>
+            ))}
+            <a className="chip" href={qs(saring, '-')} aria-pressed={supPilih === '-'}>Belum diisi</a>
+          </div>
+        </div>
       </div>
 
       <div className="card">
@@ -94,10 +114,19 @@ export default async function DOS({ searchParams }) {
             yang dipakai untuk memicu pemesanan adalah yang lebih tinggi.
           </p>
         </div>
+        {belanja.size > 0 && (
+          <div className="card-body" style={{ paddingTop: 0, paddingBottom: 0 }}>
+            <p style={{ fontSize: 12.5, margin: '0 0 8px' }}>
+              <b>Perlu dipesan:</b>{' '}
+              {[...belanja].map(([k, n]) => `${k} (${n} SKU)`).join(' · ')}
+            </p>
+          </div>
+        )}
+        <datalist id="dos-supplier">{daftarSup.map((s) => <option key={s} value={s} />)}</datalist>
         <div className="table-wrap">
           <table>
             <thead><tr>
-              <th>Master SKU</th><th className="t-right">Saldo</th>
+              <th>Master SKU</th><th>Supplier</th><th className="t-right">Saldo</th>
               <th className="t-right">Rata-rata / hari</th>
               <th className="t-right">DOS</th>
               <th className="t-right">Titik pesan</th>
@@ -113,6 +142,7 @@ export default async function DOS({ searchParams }) {
                       <div className="tt">{d.name}</div>
                       <div className="st mono">{d.code}</div>
                     </td>
+                    <td><AturSupplier id={d.id} awal={d.supplier} /></td>
                     <td className="t-num t-strong"
                         style={d.saldo <= 0 ? { color: 'var(--neg)' } : undefined}>{num(d.saldo)}</td>
                     <td className="t-num">
@@ -137,7 +167,7 @@ export default async function DOS({ searchParams }) {
                   </tr>
                 );
               })}
-              {!baris.length && <tr><td colSpan={7}>
+              {!baris.length && <tr><td colSpan={8}>
                 <Kosong judul={semua.length ? 'Tidak ada SKU di kelompok ini' : 'Belum ada Master SKU'}
                         anak={semua.length
                           ? 'Bagus — berarti tidak ada yang perlu ditindak di kelompok ini.'

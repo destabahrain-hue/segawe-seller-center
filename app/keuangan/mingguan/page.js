@@ -40,7 +40,8 @@ export default async function Mingguan({ searchParams }) {
   const qs = (u) => {
     const p = new URLSearchParams();
     for (const [k, v] of Object.entries({ m: dipilih, toko, ...u })) if (v) p.set(k, v);
-    return '/mingguan?' + p.toString();
+    // Halaman ini pindah ke /keuangan/mingguan; tautan lama ke /mingguan 404.
+    return '/keuangan/mingguan?' + p.toString();
   };
 
   return (
