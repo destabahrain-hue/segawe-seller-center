@@ -1,0 +1,28 @@
+const S = { fill: 'none', stroke: 'currentColor', strokeWidth: 1.75, strokeLinecap: 'round', strokeLinejoin: 'round' };
+const mk = (d) => function Icon(p) {
+  return <svg viewBox="0 0 24 24" {...S} {...p}>{d.map((x, i) => <path key={i} d={x} />)}</svg>;
+};
+export const IDash    = mk(['M3 13h8V3H3zM13 21h8V11h-8zM13 7h8V3h-8zM3 21h8v-4H3z']);
+export const IPulse   = mk(['M3 12h4l3 8 4-16 3 8h4']);
+export const IChart   = mk(['M3 3v18h18', 'M7 15V9M12 15V5M17 15v-3']);
+export const IMoney   = mk(['M12 2v20M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6']);
+export const IBag     = mk(['M6 2 3 6v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V6l-3-4zM3 6h18M16 10a4 4 0 0 1-8 0']);
+export const IBox     = mk(['m7.5 4.27 9 5.15M21 8l-9-5-9 5v8l9 5 9-5zM3.3 7.3 12 12.3l8.7-5M12 22V12.3']);
+export const ILink    = mk(['M10 13a5 5 0 0 0 7.5.5l3-3a5 5 0 0 0-7-7l-1.7 1.7', 'M14 11a5 5 0 0 0-7.5-.5l-3 3a5 5 0 0 0 7 7l1.7-1.7']);
+export const IHouse   = mk(['M3 21V8l9-5 9 5v13M3 21h18M9 21v-7h6v7']);
+export const IStore   = mk(['M3 9h18l-1.5-5.5A2 2 0 0 0 17.6 2H6.4a2 2 0 0 0-1.9 1.5zM3 9v11a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2V9M8 9v3a2 2 0 0 0 4 0V9m0 0v3a2 2 0 0 0 4 0V9']);
+export const IClock   = mk(['M12 22a10 10 0 1 0-10-10', 'M12 6v6l4 2']);
+export const IRefresh = mk(['M21 12a9 9 0 1 1-3-6.7L21 8', 'M21 3v5h-5']);
+export const IPlus    = mk(['M12 5v14M5 12h14']);
+export const IUp      = mk(['M5 15l7-7 7 7']);
+export const IDown    = mk(['M19 9l-7 7-7-7']);
+export const IWarn    = mk(['M12 9v4M12 17h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z']);
+export const IInfo    = mk(['M12 21a9 9 0 1 0 0-18 9 9 0 0 0 0 18z', 'M12 8v5M12 16h.01']);
+export const IMenu    = mk(['M4 6h16M4 12h16M4 18h16']);
+export const IMoon    = mk(['M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z']);
+export const IExport  = mk(['M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4M7 10l5 5 5-5M12 15V3']);
+export const IExit    = mk(['M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4', 'M16 17l5-5-5-5M21 12H9']);
+export const ICopy = mk(['M8 4V2.6A.6.6 0 0 1 8.6 2h12.8a.6.6 0 0 1 .6.6v12.8a.6.6 0 0 1-.6.6H20', 'M2.6 8h12.8a.6.6 0 0 1 .6.6v12.8a.6.6 0 0 1-.6.6H2.6a.6.6 0 0 1-.6-.6V8.6a.6.6 0 0 1 .6-.6z']);
+export const IUpArrow = mk(['M12 20V6', 'M5 13l7-7 7 7']);
+export const IUser = mk(['M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2', 'M12 11a4 4 0 1 0 0-8 4 4 0 0 0 0 8z']);
+export const ICalendar = mk(['M8 2v4', 'M16 2v4', 'M3 10h18', 'M3 6.6A.6.6 0 0 1 3.6 6h16.8a.6.6 0 0 1 .6.6v13.8a.6.6 0 0 1-.6.6H3.6a.6.6 0 0 1-.6-.6V6.6z']);
