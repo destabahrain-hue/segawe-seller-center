@@ -22,6 +22,8 @@ export async function GET(req) {
   const opsi = {
     status,
     shopId: u.searchParams.get('toko') || null,
+    // Saklar marketplace ikut, supaya berkas berisi persis yang terlihat.
+    mp: u.searchParams.get('mp') || null,
     kadaluarsa: u.searchParams.get('kadaluarsa') || null,
     kurir: u.searchParams.get('kurir') || null,
     cari: u.searchParams.get('cari') || null,
@@ -56,7 +58,8 @@ export async function GET(req) {
   } else {
     ({ header, rows, jumlah } = await barisEkspor(opsi));
   }
-  const label = kunci.map((k) => cariStatus(k).label).join(' + ');
+  const mpLabel = { shopee: 'Shopee', tiktok: 'TikTok' }[u.searchParams.get('mp')] || null;
+  const label = kunci.map((k) => cariStatus(k).label).join(' + ') + (mpLabel ? ` ${mpLabel}` : '');
   const cap = new Date().toLocaleString('sv-SE', { timeZone: 'Asia/Jakarta' })
     .replace(/[-: ]/g, '').slice(0, 14);
   // Rentangnya ikut ditulis di nama berkas. Tanpa itu, tiga ekspor bulan

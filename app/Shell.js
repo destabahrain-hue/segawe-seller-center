@@ -34,7 +34,9 @@ async function hitungPesanan(boleh) {
     const bagian = STATUS
       .map((x) => `COUNT(*) FILTER (WHERE ${x.cond})::int AS ${x.key}`)
       .join(',\n             ');
-    const r = await q(`SELECT ${bagian} FROM orders o`);
+    // pesanan_v = Shopee + TikTok, supaya angka di menu sama dengan chip
+    // di halaman Pesanan yang kini menggabungkan keduanya.
+    const r = await q(`SELECT ${bagian} FROM pesanan_v o`);
     cacheHitung = { pada: Date.now(), nilai: r[0] || null };
     return cacheHitung.nilai;
   } catch { return null; }

@@ -1,16 +1,24 @@
 // app/api/tiktok/callback/route.js
 //
 // Penampung authorization code dari TikTok Shop Open Platform.
-// TAHAP 1 (berkas ini): terima code, catat ke log, tampilkan di layar.
-// TAHAP 2 (nanti): tukar code jadi access_token + refresh_token, simpan per toko.
+// TAHAP 2: terima code, TUKAR jadi access_token + refresh_token, cari toko
+// mana yang barusan mengotorisasi, lalu simpan ke tabel tiktok_shops.
+//
+// Identitas toko tidak ikut di callback (TikTok cuma mengirim code, app_key,
+// locale, shop_region), jadi urutannya memang harus: tukar token dulu, baru
+// tanya /authorization/202309/shops siapa pemiliknya.
 //
 // Alamat ini HARUS sama persis dengan Redirect URL di Partner Center.
 // Domain PT Segawe Jaya Mulia:
 // https://segawe-seller-center-production.up.railway.app/api/tiktok/callback
 // JANGAN pakai domain Numedix — app TikTok Shop-nya beda.
 
+import { tukarKode, daftarToko, simpanToko } from '@/lib/tiktok';
+import { ensureSchema } from '@/lib/db';
+
 export const dynamic = 'force-dynamic';
 export const runtime = 'nodejs';
+export const maxDuration = 60;
 
 function aman(nilai) {
   return String(nilai == null ? '' : nilai)
@@ -48,81 +56,58 @@ function halaman({ judul, pesan, warna, baris }) {
   <h1>${aman(judul)}</h1>
   <p>${aman(pesan)}</p>
   <table>${isi}</table>
-  <div class="catatan">Tahap penampungan. Code ini <b>berumur pendek</b> dan sekali pakai —
-  salin sekarang kalau mau dipakai uji tukar token secara manual.</div>
+  <div class="catatan">Toko yang berhasil terhubung tersimpan otomatis. Kalau gagal,
+  ulangi dari authorization link — <b>code hanya berlaku sekali dan berumur pendek</b>.</div>
 </div></body></html>`;
 }
 
 export async function GET(req) {
   const url = new URL(req.url);
   const p = Object.fromEntries(url.searchParams.entries());
-
-  // TikTok memakai `code`; sebagian dokumen lama menyebutnya `auth_code`.
-  // Terima keduanya supaya tidak gagal karena beda penamaan.
   const code = p.code || p.auth_code || '';
 
-  // Catat SELURUH parameter apa adanya. Ini satu-satunya cara tahu bentuk
-  // balikan yang sebenarnya tanpa menebak dari dokumentasi.
-  console.log('[tiktok-callback]', new Date().toISOString(), JSON.stringify(p));
-
-  if (p.error || p.error_description) {
-    return new Response(
-      halaman({
-        judul: 'Otorisasi ditolak',
-        pesan: 'TikTok mengembalikan galat, bukan authorization code.',
-        warna: '#c0392b',
-        baris: [
-          ['error', p.error],
-          ['error_description', p.error_description],
-          ['state', p.state],
-        ],
-      }),
-      { status: 400, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } }
-    );
-  }
-
   if (!code) {
-    // Dibuka langsung tanpa lewat alur otorisasi (mis. dicek reviewer atau uptime check).
-    // Sengaja balas 200, BUKAN 404 — supaya alamatnya terbukti hidup.
-    return new Response(
-      halaman({
-        judul: 'Callback TikTok Shop aktif',
-        pesan: 'Alamat ini siap menerima authorization code. Belum ada code pada permintaan ini.',
-        warna: '#0f766e',
-        baris: [['parameter diterima', Object.keys(p).join(', ')]],
-      }),
-      { status: 200, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } }
-    );
+    return new Response(halaman({
+      judul: 'Callback TikTok Shop aktif',
+      pesan: 'Alamat ini siap menerima otorisasi, tapi permintaan ini tidak membawa code.',
+      warna: '#0f766e',
+      baris: Object.entries(p),
+    }), { status: 200, headers: { 'content-type': 'text/html; charset=utf-8' } });
   }
 
-  return new Response(
-    halaman({
-      judul: 'Authorization code diterima',
-      pesan: 'Code berhasil ditangkap. Penukaran jadi access_token belum dibangun.',
-      warna: '#0f766e',
-      baris: [
-        ['code', code],
-        ['state', p.state],
-        ['app_key', p.app_key],
-        ['shop_region', p.shop_region],
-        ['locale', p.locale],
-        ['seluruh parameter', JSON.stringify(p)],
-      ],
-    }),
-    { status: 200, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } }
-  );
-}
-
-// TikTok memakai GET untuk redirect. POST disediakan hanya sebagai jaring
-// pengaman supaya tidak balas 405 kalau ternyata dipanggil dengan metode lain.
-export async function POST(req) {
-  let badan = '';
   try {
-    badan = await req.text();
-  } catch {}
-  console.log('[tiktok-callback][POST]', new Date().toISOString(), badan.slice(0, 2000));
-  return new Response(JSON.stringify({ ok: true }), {
-    status: 200,
-    headers: { 'content-type': 'application/json', 'cache-control': 'no-store' },
-  });
+    await ensureSchema();
+    const token = await tukarKode(code);
+    const toko = await daftarToko(token.access_token);
+    const n = await simpanToko(token, toko);
+
+    return new Response(halaman({
+      judul: n ? `${n} toko TikTok terhubung` : 'Token didapat, tapi tidak ada toko',
+      pesan: n ? 'Token dan identitas toko sudah tersimpan. Tutup halaman ini.'
+               : 'Tukar token berhasil, tapi daftar toko kosong — periksa apakah otorisasi '
+                 + 'memang untuk toko yang dimaksud.',
+      warna: n ? '#0f766e' : '#b45309',
+      baris: [
+        ['Penjual', token.seller_name || '—'],
+        ['Toko', toko.map((t) => `${t.name} (${t.id})`).join(', ') || '—'],
+        ['Region', toko.map((t) => t.region).join(', ') || p.shop_region || '—'],
+        ['Token berlaku sampai', token.access_token_expire_in
+          ? new Date(Number(token.access_token_expire_in) * 1000).toLocaleString('id-ID') : '—'],
+        ['Refresh sampai', token.refresh_token_expire_in
+          ? new Date(Number(token.refresh_token_expire_in) * 1000).toLocaleString('id-ID') : '—'],
+      ],
+    }), { status: 200, headers: { 'content-type': 'text/html; charset=utf-8' } });
+  } catch (e) {
+    return new Response(halaman({
+      judul: 'Gagal menghubungkan toko TikTok',
+      pesan: e.message,
+      warna: '#b91c1c',
+      baris: [
+        ['code', `${code.slice(0, 24)}… (${code.length} karakter)`],
+        ['app_key', p.app_key || '—'],
+        ['shop_region', p.shop_region || '—'],
+        ['Langkah berikutnya', 'Ulangi dari authorization link; code sebelumnya sudah hangus.'],
+      ],
+    }), { status: 200, headers: { 'content-type': 'text/html; charset=utf-8' } });
+  }
 }

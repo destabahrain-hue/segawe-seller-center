@@ -1,6 +1,7 @@
 'use client';
 import { useState } from 'react';
 import ThemeToggle from './ThemeToggle';
+import PWA from './PWA';
 import { IRefresh, IExit } from './Icons';
 
 export default function Topbar({ judul, kanan = null }) {
@@ -45,6 +46,7 @@ export default function Topbar({ judul, kanan = null }) {
       <div className="spacer" />
       {pesan && <span className="badge b-mute">{pesan}</span>}
       {kanan}
+      <PWA />
       <span className="cmd" aria-hidden="true">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round">
           <circle cx="11" cy="11" r="8" /><path d="M21 21l-4.3-4.3" />

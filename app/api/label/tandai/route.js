@@ -43,8 +43,16 @@ export async function POST(req) {
         WHERE order_sn = ANY($1::text[])
         RETURNING order_sn`, [sns]);
 
-    await log('label', `${r.length} pesanan ditandai sudah dicetak`);
-    return NextResponse.json({ ok: true, ditandai: r.length });
+    // Pesanan TikTok memakai kolom kembarannya sendiri di tiktok_orders.
+    const tt = await q(
+      `UPDATE tiktok_orders SET cetak_count = COALESCE(cetak_count,0) + 1,
+              dicetak_at = COALESCE(dicetak_at, now())
+        WHERE order_id = ANY($1::text[])
+        RETURNING order_id`, [sns]);
+
+    await log('label', `${r.length + tt.length} pesanan ditandai sudah dicetak`
+      + (tt.length ? ` (${tt.length} TikTok)` : ''));
+    return NextResponse.json({ ok: true, ditandai: r.length + tt.length });
   } catch (e) {
     return NextResponse.json({ ok: false, error: e.message }, { status: 500 });
   }

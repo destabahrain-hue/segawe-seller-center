@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { ensureSchema, q, one, log } from '@/lib/db';
-import { peranSekarang, bolehKelola, buatHash, HALAMAN } from '@/lib/auth';
+import { peranSekarang, bolehKelola, buatHash, HALAMAN, akunMaster } from '@/lib/auth';
 
 export const dynamic = 'force-dynamic';
 
@@ -59,6 +59,10 @@ export async function POST(req) {
         return NextResponse.json({ ok: false, error: 'Nama pengguna wajib dan kata sandi minimal 8 karakter' }, { status: 400 });
       }
       if (!b.role_id) return NextResponse.json({ ok: false, error: 'Peran belum dipilih' }, { status: 400 });
+      const bentrokMaster = akunMaster();
+      if (bentrokMaster && u.toLowerCase() === bentrokMaster.username.toLowerCase()) {
+        return NextResponse.json({ ok: false, error: 'Nama pengguna itu dipakai akun master' }, { status: 409 });
+      }
       const ada = await one(`SELECT id FROM users WHERE lower(username) = lower($1)`, [u]);
       if (ada) return NextResponse.json({ ok: false, error: 'Nama pengguna sudah dipakai' }, { status: 409 });
 
@@ -66,6 +70,37 @@ export async function POST(req) {
                VALUES ($1,$2,$3,'',$4)`,
         [String(b.nama || u).trim(), u, buatHash(b.sandi), b.role_id]);
       await log('pengguna', `Pengguna ${u} dibuat`);
+      return NextResponse.json({ ok: true });
+    }
+
+    if (b.aksi === 'ubah') {
+      const u = String(b.username || '').trim();
+      const nama = String(b.nama || '').trim();
+      if (!u || !nama) return NextResponse.json({ ok: false, error: 'Nama dan nama pengguna wajib diisi' }, { status: 400 });
+      const bentrokMaster = akunMaster();
+      if (bentrokMaster && u.toLowerCase() === bentrokMaster.username.toLowerCase()) {
+        return NextResponse.json({ ok: false, error: 'Nama pengguna itu dipakai akun master' }, { status: 409 });
+      }
+      const ada = await one(`SELECT id FROM users WHERE lower(username) = lower($1) AND id <> $2`, [u, b.id]);
+      if (ada) return NextResponse.json({ ok: false, error: 'Nama pengguna sudah dipakai akun lain' }, { status: 409 });
+      await q(`UPDATE users SET nama = $2, username = $3 WHERE id = $1`, [b.id, nama, u]);
+      // Ganti kata sandi hanya kalau diisi — kosong berarti dibiarkan.
+      if (b.sandi) {
+        if (String(b.sandi).length < 8) {
+          return NextResponse.json({ ok: false, error: 'Kata sandi minimal 8 karakter' }, { status: 400 });
+        }
+        await q(`UPDATE users SET password_hash = $2 WHERE id = $1`, [b.id, buatHash(b.sandi)]);
+      }
+      await q(`UPDATE users SET boleh_koreksi = $2 WHERE id = $1`, [b.id, !!b.boleh_koreksi]);
+      await log('pengguna', `Akun ${u} diubah${b.sandi ? ' (kata sandi diganti)' : ''}`
+                            + (b.boleh_koreksi ? ', izin koreksi stok DIBERIKAN' : ', izin koreksi stok dicabut'));
+      return NextResponse.json({ ok: true });
+    }
+
+    if (b.aksi === 'koreksi') {
+      await q(`UPDATE users SET boleh_koreksi = $2 WHERE id = $1`, [b.id, !!b.boleh_koreksi]);
+      const u = await one(`SELECT username FROM users WHERE id = $1`, [b.id]);
+      await log('pengguna', `Izin koreksi stok ${b.boleh_koreksi ? 'diberikan ke' : 'dicabut dari'} ${u?.username || b.id}`);
       return NextResponse.json({ ok: true });
     }
 

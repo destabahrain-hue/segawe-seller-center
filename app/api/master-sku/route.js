@@ -78,11 +78,37 @@ export async function POST(req) {
       return NextResponse.json({ ok: true, ms });
     }
 
+    if (b.aksi === 'supplier') {
+      const v = String(b.supplier || '').trim();
+      await q(`UPDATE master_sku SET supplier = $2 WHERE id = $1`, [b.id, v || null]);
+      return NextResponse.json({ ok: true });
+    }
+
     if (b.aksi === 'ubah') {
       await q(`UPDATE master_sku SET name = COALESCE($2,name), kind = COALESCE($3,kind),
                       reorder_at = COALESCE($4,reorder_at) WHERE id = $1`,
         [b.id, b.name || null, b.kind || null,
          b.reorder_at === undefined || b.reorder_at === '' ? null : Number(b.reorder_at)]);
+      return NextResponse.json({ ok: true });
+    }
+
+    /**
+     * Riwayat HPP satu SKU.
+     *
+     * Ditampilkan sebelum orang menambah catatan baru, supaya terlihat
+     * apa yang sudah ada dan sejak kapan berlaku. Tanpa ini, satu-satunya
+     * cara mengetahuinya adalah membuka database.
+     */
+    if (b.aksi === 'riwayat-hpp') {
+      const r = await q(
+        `SELECT id, hpp, effective_from
+           FROM master_sku_hpp WHERE master_sku_id = $1
+          ORDER BY effective_from DESC`, [b.id]);
+      return NextResponse.json({ ok: true, riwayat: r });
+    }
+
+    if (b.aksi === 'hapus-hpp') {
+      await q('DELETE FROM master_sku_hpp WHERE id = $1', [b.id]);
       return NextResponse.json({ ok: true });
     }
 

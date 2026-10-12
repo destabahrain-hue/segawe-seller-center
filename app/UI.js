@@ -70,7 +70,10 @@ export function Ledger({ t, keterangan }) {
 
       <div className="legend">
         <Leg cls="leg-hpp"  k="HPP"            v={t.hpp}   p="dari Master SKU" />
-        <Leg cls="leg-fee"  k="Biaya platform" v={t.biaya} p={t.perkiraan ? 'sebagian perkiraan' : 'dari data Shopee'} />
+        <Leg cls="leg-fee"  k="Biaya platform" v={t.biaya}
+             p={t.ditaksir ? 'sebagian taksiran'
+               : t.perkiraan ? 'dari perkiraan Shopee'
+               : 'dari data Shopee'} />
         <Leg cls="leg-ads"  k="Iklan + PPN"    v={t.iklan}
              p={t.iklanPokok
                  ? `termasuk PPN ${rp(t.iklanPpn)} · ROAS ${(o / t.iklan).toFixed(1)}×`

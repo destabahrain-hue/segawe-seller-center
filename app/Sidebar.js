@@ -11,7 +11,14 @@ const MENU = [
     { href: '/realtime',     label: 'Laporan Realtime', Icon: IPulse },
     { href: '/laporan-toko', label: 'Laporan Toko',     Icon: IChart, anak: [
         { href: '/laporan-toko',     label: 'Ringkasan toko' },
+        { href: '/laporan-toko/produk', label: 'Laporan SKU' },
         { href: '/laporan-toko/sku', label: 'SKU Bocor' },
+        { href: '/laporan-toko/waktu', label: 'Penjualan Per Waktu' },
+      ] },
+    { href: '/pelanggan',    label: 'Pelanggan',        Icon: IUser, anak: [
+        { href: '/pelanggan',          label: 'Data Pelanggan' },
+        { href: '/pelanggan/retensi',  label: 'Retensi & Segmen' },
+        { href: '/pelanggan/kurir',    label: 'Distribusi Kurir' },
       ] },
     { href: '/keuangan',     label: 'Keuangan',         Icon: IMoney, anak: [
         { href: '/keuangan',          label: 'Realtime' },
@@ -50,10 +57,15 @@ const MENU = [
     { href: '/gudang',     label: 'Gudang',     Icon: IHouse, anak: [
         { href: '/gudang',     label: 'Stok fisik' },
         { href: '/gudang/dos', label: 'Days of Supply' },
+        { href: '/gudang/opname', label: 'Stock Opname' },
+        { href: '/gudang/laporan', label: 'Laporan Stok' },
       ] },
   ]},
   { grup: 'Sistem', item: [
-    { href: '/toko',    label: 'Toko Terhubung', Icon: IStore },
+    { href: '/toko',    label: 'Toko Terhubung', Icon: IStore, anak: [
+        { href: '/toko',   label: 'Shopee' },
+        { href: '/tiktok', label: 'TikTok Shop' },
+      ] },
     { href: '/antrean', label: 'Antrean Tugas',  Icon: IClock },
     { href: '/pengguna', label: 'Pengguna',      Icon: IUser },
   ]},

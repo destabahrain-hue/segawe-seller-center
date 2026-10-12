@@ -521,3 +521,80 @@ input[type=checkbox]{width:15px;height:15px;accent-color:var(--brand);cursor:poi
 }
 .menu-btn{display:none}
 @media (prefers-reduced-motion:reduce){*{transition-duration:.01ms!important;animation-duration:.01ms!important}}
+
+/* ── DIALOG (dipakai Ubah akun & petunjuk pasang) ──────────
+   Di layar besar tampil di tengah; di HP jadi lembar yang naik dari bawah,
+   supaya jempol tetap sampai ke tombolnya. */
+.lapis{position:fixed;inset:0;background:rgba(7,10,18,.55);z-index:90;
+  display:flex;align-items:flex-start;justify-content:center;padding:6vh 16px;overflow-y:auto}
+.lembar{max-height:88dvh;overflow-y:auto}
+
+/* ── MOBILE & PWA ─────────────────────────────────────────
+   Aplikasi ini dipakai sambil berdiri di gudang, jadi di layar kecil yang
+   diutamakan: sasaran sentuh besar, angka tetap terbaca, dan tabel lebar
+   tidak memaksa memperkecil seluruh halaman. */
+
+/* Area aman notch & bilah bawah iPhone saat dipasang sebagai aplikasi. */
+.topbar{padding-top:env(safe-area-inset-top,0)}
+.topbar{height:auto;min-height:var(--topbar-h)}
+.content{padding-bottom:calc(var(--s6) + env(safe-area-inset-bottom,0))}
+.sidebar{padding-top:env(safe-area-inset-top,0)}
+
+@media (max-width:900px){
+  .content{padding:var(--s4) var(--s4) calc(var(--s5) + env(safe-area-inset-bottom,0))}
+  .topbar{gap:var(--s3);padding:0 var(--s4);padding-top:env(safe-area-inset-top,0);flex-wrap:wrap}
+  .topbar h1{font-size:15px}
+
+  /* Sasaran sentuh: 38-40px, sesuai anjuran ukuran jempol. */
+  .btn{height:38px;min-height:38px}
+  .btn-sm{height:34px;min-height:34px;padding:0 12px}
+  .chip{min-height:34px}
+  input,select,textarea{min-height:40px;font-size:16px}   /* 16px = iOS tidak ikut memperbesar layar */
+  input[type=checkbox]{width:20px;height:20px}
+
+  .kpi-row{grid-template-columns:repeat(2,1fr);gap:var(--s3)}
+  .kpi{padding:var(--s3) var(--s4)}
+  .kpi .v{font-size:19px}
+  .kpi .d{font-size:11px}
+
+  /* Tabel lebar: geser mendatar, kolom pertama tetap terlihat. */
+  .table-wrap{overflow-x:auto;-webkit-overflow-scrolling:touch;overscroll-behavior-x:contain}
+  thead th,tbody td{padding-left:var(--s3);padding-right:var(--s3)}
+  .kol-opsional{display:none}
+
+  .lapis{padding:0;align-items:flex-end}
+  .lembar{width:100%!important;max-width:none;max-height:92dvh;
+    border-radius:var(--r-lg) var(--r-lg) 0 0;padding-bottom:env(safe-area-inset-bottom,0)}
+
+  .card-head{flex-wrap:wrap;padding:var(--s3) var(--s4)}
+  .form-row{flex-direction:column;align-items:stretch}
+  .form-row .field{width:100%}
+}
+
+@media (max-width:560px){
+  .kpi-row{grid-template-columns:1fr}
+  .topbar .crumb{display:none}
+}
+
+/* ── FORMULIR MUTASI GUDANG ───────────────────────────────
+   Di layar lebar berbentuk tabel; di HP tiap baris menumpuk jadi kartu
+   dengan label di atas kolomnya, supaya tidak perlu digeser-geser. */
+.mut{border:1px solid var(--line);border-radius:var(--r-lg)}
+.mut-head,.mut-row{display:grid;gap:12px;align-items:center;
+  grid-template-columns:minmax(200px,1fr) 120px 110px 40px}
+.mut-harga .mut-head,.mut-harga .mut-row{grid-template-columns:minmax(200px,1fr) 120px 110px 130px 40px}
+.mut-head{padding:8px 12px;font-size:10.5px;font-weight:800;letter-spacing:.05em;
+  text-transform:uppercase;color:var(--ink-3);background:var(--surface-sunken);
+  border-bottom:1px solid var(--line);border-radius:var(--r-lg) var(--r-lg) 0 0}
+.mut-row{padding:8px 12px}
+.mut-row + .mut-row{border-top:1px solid var(--line)}
+
+@media (max-width:760px){
+  .mut-head{display:none}
+  .mut-row{grid-template-columns:1fr 1fr;gap:8px;padding:12px}
+  .mut-harga .mut-row{grid-template-columns:1fr 1fr}
+  .mut-row > *:nth-child(1){grid-column:1 / -1}
+  .mut-row .mut-hapus{justify-self:end}
+  .mut-row [data-l]::before{content:attr(data-l);display:block;font-size:10.5px;font-weight:800;
+    letter-spacing:.05em;text-transform:uppercase;color:var(--ink-3);margin-bottom:3px}
+}

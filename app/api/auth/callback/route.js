@@ -25,7 +25,22 @@ export async function GET(req) {
     await q(`INSERT INTO shops (shop_id) VALUES ($1) ON CONFLICT (shop_id) DO NOTHING`, [shopId]);
     await tukarKode(code, shopId);
     await tarikNamaToko(shopId).catch(() => {});
-    await log('oauth', `Toko ${shopId} berhasil dihubungkan`, { shopId });
+
+    /**
+     * Penarikan awal langsung diantrikan, tapi TIDAK dikerjakan di sini:
+     * Shopee menunggu balasan redirect ini, dan menarik ratusan panggilan
+     * di dalamnya akan membuat halaman menggantung. Penjadwal yang
+     * mengerjakannya bertahap; kemajuannya terlihat di halaman Toko.
+     */
+    const { tarikAwal } = await import('@/lib/tarik');
+    const rencana = await tarikAwal(shopId).catch((e) => {
+      log('oauth', `Antrean tarik awal gagal untuk ${shopId}: ${e.message}`, { shopId, ok: false });
+      return null;
+    });
+
+    await log('oauth', `Toko ${shopId} berhasil dihubungkan`
+      + (rencana ? ` — penarikan awal 90 hari diantrikan (${rencana.pesanan?.tugas || 0} potongan pesanan)` : ''),
+      { shopId });
     return NextResponse.redirect(`${base}/toko?hasil=berhasil&shop=${shopId}`);
   } catch (e) {
     await log('oauth', `Gagal menghubungkan toko ${shopId}: ${e.message}`, { shopId, ok: false });
