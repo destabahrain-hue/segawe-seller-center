@@ -65,7 +65,9 @@ export default async function Shell({ judul, kanan, rute = null, children }) {
   const ditolak = rute && !bolehRute(p, rute);
 
   // Hanya dihitung untuk yang memang boleh membuka halaman Pesanan.
-  const hitung = await hitungPesanan(bolehRute(p, '/pesanan'));
+  // Sub-menu status pesanan sudah tidak ada (kini kartu di halaman Pesanan),
+  // jadi sidebar tidak butuh angka lagi — kuerinya tidak dijalankan.
+  const hitung = null;
 
   return (
     <div className="shell">

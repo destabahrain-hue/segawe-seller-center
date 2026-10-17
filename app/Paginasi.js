@@ -12,7 +12,7 @@ export const bacaPer = (v) => (PER_HALAMAN.includes(Number(v)) ? Number(v) : 50)
  */
 export default function Paginasi({
   halaman, perHalaman, total, qs, aksi,
-  cari = null, saring = {}, cariPlaceholder = 'Cari…', bawah = false,
+  cari = null, saring = {}, cariPlaceholder = 'Cari…', bawah = false, tanpaCari = false,
 }) {
   if (!total) return null;
   const jumlahHalaman = Math.max(Math.ceil(total / perHalaman), 1);
@@ -37,7 +37,7 @@ export default function Paginasi({
          style={mati(halaman >= jumlahHalaman)}>Berikutnya ›</a>
       <a className="btn btn-sm" href={ke(jumlahHalaman)} style={mati(halaman >= jumlahHalaman)}>Akhir »</a>
 
-      {!bawah ? (
+      {!bawah && !tanpaCari ? (
         <form method="get" action={aksi}
               style={{ display: 'flex', gap: 6, alignItems: 'center', flex: 1,
                        justifyContent: 'center', minWidth: 280 }}>

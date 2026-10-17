@@ -1,9 +1,23 @@
 'use client';
 import { useState } from 'react';
 import PackDialog from './PackDialog';
+import { tahapPesanan, TAHAP_LABEL } from '@/lib/tahap';
 
-export function Pilihan({ pesanan, tahap, uang = true }) {
+export function Pilihan({ pesanan, tahap: tahapHalaman, uang = true }) {
   const [pilih, setPilih] = useState(new Set());
+  /**
+   * "Perlu Dikirim" berisi semua tahap gudang sekaligus (tanpa sub-menu,
+   * seperti Gurita). Tombol yang muncul ditentukan dari pesanan yang
+   * DICENTANG: semua Belum diproses → Pack; semua Sedang dikemas → Cetak
+   * resi / Tandai dikemas; dst. Centang campur tahap → hanya pesan saran.
+   */
+  const tahapTerpilih = new Set(pesanan.filter((o) => pilih.has(o.id)).map(tahapPesanan));
+  const perlu = tahapHalaman === 'perlu';
+  const tahap = !perlu ? tahapHalaman
+    : tahapTerpilih.size === 0 ? 'baru'
+    : tahapTerpilih.size === 1 ? ([...tahapTerpilih][0] || 'campuran')
+    : 'campuran';
+  const campurTahap = perlu && tahapTerpilih.size > 1;
   const [sibuk, setSibuk] = useState(false);
   const [err, setErr] = useState('');
   const [pdf, setPdf] = useState(null);      // { url, jumlah, toko }
@@ -401,6 +415,13 @@ export function Pilihan({ pesanan, tahap, uang = true }) {
                   onClick={() => jalan('kemas')}>Langsung tandai dikemas</button>
         )}
       </div>
+      {campurTahap && (
+        <p className="err" style={{ color: 'var(--warn)' }}>
+          Pesanan yang dicentang berasal dari tahap berbeda
+          ({[...tahapTerpilih].map((t) => TAHAP_LABEL[t] || t).join(', ')}). Pilih pesanan dari satu
+          tahap saja, atau pakai saringan <b>Tahap proses</b> di atas.
+        </p>
+      )}
       {err && <p className="err">{err}</p>}
 
       {tandai && (
@@ -709,8 +730,10 @@ export function Pilihan({ pesanan, tahap, uang = true }) {
       {pesanan.map((o) => (
         <Baris key={`${o.platform || 'shopee'}-${o.order_sn}`} o={o} uang={uang}
                dipilih={pilih.has(o.id)} onToggle={() => toggle(o.id)}
-               tahap={tahap} sibuk={sibuk}
-               onSisih={bisaDipilih(o) ? () => sisihkan([o.id], tahap === 'sisih') : null} />
+               tahap={perlu ? tahapPesanan(o) : tahap} tampilTahap={perlu || tahapHalaman === 'semua'}
+               sibuk={sibuk}
+               onSisih={bisaDipilih(o)
+                 ? () => sisihkan([o.id], (perlu ? tahapPesanan(o) : tahap) === 'sisih') : null} />
       ))}
     </>
   );
@@ -759,7 +782,7 @@ function TanggapiBatal({ o }) {
   );
 }
 
-function Baris({ o, uang = true, dipilih, onToggle, tahap, sibuk, onSisih }) {
+function Baris({ o, uang = true, dipilih, onToggle, tahap, tampilTahap, sibuk, onSisih }) {
   const item = o.item || [];
   const tanda = o.lewat ? 'b-neg' : o.segera ? 'b-warn' : null;
   const teks = o.lewat ? `Lewat batas ${sisa(o.ship_by_date)}`
@@ -798,6 +821,9 @@ function Baris({ o, uang = true, dipilih, onToggle, tahap, sibuk, onSisih }) {
           <span className={'badge ' + (o.pack_gagal_jenis === 'marketplace' ? 'b-warn' : 'b-neg')}>
             {o.pack_gagal_jenis === 'marketplace' ? 'Shopee belum siap' : 'Pack ditolak'}
           </span>
+        )}
+        {tampilTahap && tahapPesanan(o) && (
+          <span className="badge b-pos" title="Tahap kerja gudang">{TAHAP_LABEL[tahapPesanan(o)]}</span>
         )}
         <span className="badge b-mute">{o.status_asli || o.status}</span>
         {/* Tombol per baris, seperti BigSeller: menyisihkan satu pesanan

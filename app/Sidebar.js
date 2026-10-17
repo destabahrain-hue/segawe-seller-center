@@ -29,18 +29,10 @@ const MENU = [
   ]},
   { grup: 'Operasional', item: [
     { href: '/pesanan',    label: 'Pesanan',    Icon: IBag, anak: [
-        { href: '/pesanan?s=baru',       label: 'Pesanan baru',   kunci: 'baru' },
-        { href: '/pesanan?s=gagalpack',  label: 'Proses gagal',   kunci: 'gagalpack' },
-        { href: '/pesanan?s=verifikasi', label: 'Menunggu marketplace', kunci: 'verifikasi' },
-        { href: '/pesanan?s=sisih',      label: 'Disisihkan',     kunci: 'sisih' },
-        { href: '/pesanan?s=proses',     label: 'Sedang dikemas', kunci: 'proses' },
+        // Status pesanan (Semua, Belum Bayar, Perlu Dikirim, …) kini kartu di
+        // halaman Pesanan sendiri — seperti Gurita Market — bukan sub-menu.
+        { href: '/pesanan',              label: 'Kelola Pesanan' },
         { href: '/pesanan/scan',         label: 'Scan & Kirim' },
-        { href: '/pesanan?s=pickup',     label: 'Siap dijemput',  kunci: 'pickup' },
-        { href: '/pesanan?s=dikirim',    label: 'Dikirim',        kunci: 'dikirim' },
-        { href: '/pesanan?s=selesai',    label: 'Selesai',        kunci: 'selesai' },
-        { href: '/pesanan?s=batal',      label: 'Batal',          kunci: 'batal' },
-        { href: '/pesanan?s=unpaid',     label: 'Belum dibayar',  kunci: 'unpaid' },
-        { href: '/pesanan?s=semua',      label: 'Semua pesanan',  kunci: 'semua' },
         { href: '/pesanan/retur',        label: 'Purna Jual' },
         { href: '/pesanan/template',     label: 'Template Ekspor' },
       ] },
