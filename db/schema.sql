@@ -990,6 +990,7 @@ CREATE TABLE IF NOT EXISTS tiktok_returns (
   fetched_at        TIMESTAMPTZ NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS idx_tiktok_returns_waktu ON tiktok_returns (create_time DESC);
+CREATE INDEX IF NOT EXISTS idx_tiktok_returns_order ON tiktok_returns (order_id);
 
 --  Penanda sampai mana pesanan sudah ditarik per toko, supaya penarikan
 --  berkala tidak mengulang dari awal.
