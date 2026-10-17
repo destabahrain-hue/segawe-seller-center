@@ -1,6 +1,6 @@
 import { NextResponse } from 'next/server';
 import { ensureSchema, log, q } from '@/lib/db';
-import { barisEkspor, barisEksporPilihan, cariStatus, kunciStatus, cariBasis, waktuDari } from '@/lib/orders';
+import { barisEkspor, barisEksporPilihan, cariStatus, kunciStatus, cariBasis, waktuDari, terjemahLama } from '@/lib/orders';
 import { TEMPLATE_BAWAAN, kunciSah } from '@/lib/kolom-ekspor';
 import { buatXlsx } from '@/lib/xlsx';
 
@@ -11,7 +11,10 @@ export async function GET(req) {
   await ensureSchema();
   const u = new URL(req.url);
   // Sama seperti layar: status boleh lebih dari satu, dipisah koma.
-  const kunci = kunciStatus(u.searchParams.get('status') || 'baru');
+  // Tautan ekspor lama (?status=baru, ?status=proses) diterjemahkan ke
+  // Perlu Dikirim + tahap, sama seperti halaman Pesanan.
+  const lama = terjemahLama(u.searchParams.get('status'));
+  const kunci = kunciStatus(lama ? lama.s : (u.searchParams.get('status') || 'semua'));
   const status = kunci.length > 1 ? kunci : kunci[0];
   const waktu = waktuDari({
     w: u.searchParams.get('w'),
@@ -28,6 +31,8 @@ export async function GET(req) {
     kurir: u.searchParams.get('kurir') || null,
     cari: u.searchParams.get('cari') || null,
     cetak: u.searchParams.get('cetak') || null,
+    tipe: u.searchParams.get('tipe') || null,
+    tahap: u.searchParams.get('tahap') || lama?.tahap || null,
     urut: u.searchParams.get('urut') || null,
     arah: u.searchParams.get('arah') || null,
     waktu,
